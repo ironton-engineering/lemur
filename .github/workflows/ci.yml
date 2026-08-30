@@ -14,8 +14,8 @@ jobs:
         os: [ubuntu-22.04, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
           cache: pip
@@ -25,7 +25,7 @@ jobs:
       - run: ruff check server scripts tests
       - run: ./scripts/check-release.sh
       - run: ./release/build-release.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.os }}
           path: dist/
@@ -33,5 +33,5 @@ jobs:
   shellcheck:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: shellcheck install.sh scripts/*.sh scripts/lemur release/build-release.sh
