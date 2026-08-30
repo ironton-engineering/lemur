@@ -1,0 +1,6 @@
+.venv/
+.cursor
+__pycache__/
+*.pyc
+.env
+lemur.desktop

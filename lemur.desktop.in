@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Lemur
+GenericName=llama.cpp Control Panel
+Comment=Discover GGUF models, assign GPUs, run llama-server
+Exec=@ROOT@/scripts/run.sh
+Icon=@ROOT@/assets/icon.svg
+Path=@ROOT@
+Terminal=false
+StartupNotify=false
+StartupWMClass=Lemur
+Categories=Development;Utility;
+Keywords=llama;gguf;gpu;ai;llm;

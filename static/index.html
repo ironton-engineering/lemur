@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <title>Lemur</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260822a">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+        <div class="brand tip" data-tip="Local control panel for llama.cpp servers, GPU placement, chat, and Codex">
+        <div class="prompt-line"><span class="dim">user@lemur</span><span class="accent">:</span><span class="path">~</span><span class="accent">$</span> ./hub</div>
+        <h1>Lemur</h1>
+        <p class="brand-tag">llama.cpp // local inference control</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-analyzer" class="btn btn-ghost tip" data-tip="Open the live process analyzer: VRAM, throughput, ctx/gen timeline">[analyzer]</button>
+        <button type="button" id="btn-refresh" class="btn btn-ghost tip" data-tip="Rescan the filesystem for GGUF / HuggingFace models">[refresh]</button>
+        <button type="button" id="btn-settings" class="btn btn-ghost tip" data-tip="UI and server settings (font size, llama-server path, scan root)" aria-label="Settings">[cfg]</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="panel panel-models">
+        <div class="panel-head">
+          <h2 class="tip" data-tip="Saved one-click model launch presets"><span class="accent">›</span> favorites</h2>
+          <button type="button" id="btn-toggle-models" class="btn btn-ghost btn-tiny tip" data-tip="Show or hide the full discovered-model list" aria-expanded="false">[all models]</button>
+        </div>
+        <div id="favorite-empty" class="favorite-empty muted hidden">// no favorites yet; start a model, then use favorite on its running card</div>
+        <ul id="favorite-list" class="favorite-list"></ul>
+        <section id="model-browser" class="model-browser hidden" aria-hidden="true">
+          <div class="model-browser-head">
+            <span class="model-browser-title"><span class="accent">›</span> all models</span>
+            <input type="search" id="model-search" placeholder="filter…" autocomplete="off" class="tip" data-tip="Filter models by name or path">
+          </div>
+          <div id="scan-status" class="scan-status hidden">scanning filesystem…</div>
+          <ul id="model-list" class="model-list"></ul>
+        </section>
+      </section>
+
+      <aside class="panel panel-side">
+        <section class="panel-block panel-block-launch">
+          <h2 class="tip" data-tip="Configure and start a llama-server instance"><span class="accent">›</span> launch</h2>
+          <form id="launch-form" class="launch-form">
+            <div class="launch-form-fields">
+            <div class="field">
+              <label class="tip" data-tip="Model chosen from the list on the left">selected</label>
+              <div id="selected-model" class="selected-model muted">// pick a model</div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="gpu-select" class="tip" data-tip="Primary GPU (CUDA device) for this server. Sets CUDA_VISIBLE_DEVICES order.">gpu</label>
+                <select id="gpu-select" required></select>
+              </div>
+              <div class="field">
+                <label for="spill-select" class="tip" data-tip="Allow overflow when model+context does not fit the primary GPU. RAM and mismatched GPUs are capacity fallbacks and can be much slower.">spill</label>
+                <select id="spill-select">
+                  <option value="none" selected>gpu only</option>
+                  <option value="ram">allow ram fallback</option>
+                  <option value="gpu">use other gpu</option>
+                  <option value="both">other gpu + ram fallback</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ctx-select" class="tip" data-tip="Context window size in tokens (-c). Larger = longer chats/tools but much more VRAM for the KV cache.">ctx</label>
+                <select id="ctx-select">
+                  <option value="4096">4k</option>
+                  <option value="8192" selected>8k</option>
+                  <option value="16384">16k</option>
+                  <option value="32768">32k</option>
+                  <option value="65536">64k</option>
+                  <option value="131072">128k</option>
+                  <option value="262144">256k</option>
+                  <option value="524288">512k</option>
+                  <option value="1048576">1M</option>
+                  <option value="custom">custom</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="port-input" class="tip" data-tip="TCP port for this llama-server. Leave empty to auto-pick the next free port from 8080.">port</label>
+                <div class="num-wrap">
+                  <input type="number" id="port-input" placeholder="auto" min="1024" max="65535">
+                  <div class="num-steppers" aria-hidden="true">
+                    <button type="button" class="num-step" data-target="port-input" data-dir="1">▴</button>
+                    <button type="button" class="num-step" data-target="port-input" data-dir="-1">▾</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="field hidden" id="ctx-custom-wrap">
+              <label for="ctx-custom" class="tip" data-tip="Custom context size in tokens (512–1048576). Drag to set.">custom ctx</label>
+              <div class="ctx-slider-row">
+                <input type="range" id="ctx-custom" min="512" max="1048576" step="512" value="8192">
+                <span id="ctx-custom-val" class="ctx-slider-val">8k</span>
+              </div>
+            </div>
+            <div class="field-row field-row-launch">
+              <div class="field">
+                <label for="ngl-input" class="tip" data-tip="GPU layers (-ngl). 999/all = fully offload to GPU. Ignored when spill ≠ gpu only (then ngl=auto).">ngl</label>
+                <div class="num-wrap">
+                  <input type="number" id="ngl-input" value="999" min="0">
+                  <div class="num-steppers" aria-hidden="true">
+                    <button type="button" class="num-step" data-target="ngl-input" data-dir="1">▴</button>
+                    <button type="button" class="num-step" data-target="ngl-input" data-dir="-1">▾</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field field-start">
+                <label class="label-spacer" for="btn-start">start</label>
+                <button type="submit" id="btn-start" class="btn btn-primary tip" data-tip="Start llama-server with these settings and sync the Codex profile" disabled>start()</button>
+              </div>
+            </div>
+            <div class="field-row field-row-opts">
+              <div class="field">
+                <label class="check-toggle tip" data-tip="Multi-Token Prediction speculative decoding (--spec-type draft-mtp). Needs an MTP GGUF. Auto-checked when the model name/path contains MTP.">
+                  <input type="checkbox" id="mtp-check">
+                  <span class="check-toggle-box" aria-hidden="true"></span>
+                  <span class="check-toggle-label">draft-mtp</span>
+                </label>
+              </div>
+              <div class="field" id="mtp-draft-wrap">
+                <label for="mtp-draft-n" class="tip" data-tip="Speculative draft tokens (--spec-draft-n-max). Lemur uses the model profile when available; try 1–6 for your hardware.">draft_n</label>
+                <div class="num-wrap">
+                  <input type="number" id="mtp-draft-n" value="2" min="1" max="6" step="1" disabled>
+                  <div class="num-steppers" aria-hidden="true">
+                    <button type="button" class="num-step" data-target="mtp-draft-n" data-dir="1">▴</button>
+                    <button type="button" class="num-step" data-target="mtp-draft-n" data-dir="-1">▾</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="field-row field-row-opts">
+              <div class="field">
+                <label class="check-toggle tip" data-tip="Load sibling mmproj*.gguf with --mmproj for image/video input. Auto-checked when a projector is next to the model.">
+                  <input type="checkbox" id="vision-check">
+                  <span class="check-toggle-box" aria-hidden="true"></span>
+                  <span class="check-toggle-label">vision</span>
+                </label>
+              </div>
+              <div class="field">
+                <div id="vision-mmproj" class="selected-model muted tip" data-tip="Detected mmproj beside the selected model">// none</div>
+              </div>
+            </div>
+            </div>
+            <div id="vram-estimate" class="vram-est hidden" aria-live="polite">
+              <div class="vram-est-top">
+                <span id="vram-est-verdict" class="vram-est-verdict">estimate</span>
+                <span id="vram-est-summary" class="vram-est-summary"></span>
+              </div>
+              <div id="vram-est-breakdown" class="vram-est-breakdown"></div>
+              <div id="vram-est-gpus" class="vram-est-gpus"></div>
+              <div id="vram-est-tip" class="vram-est-tip hidden"></div>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel-block panel-block-running">
+          <div class="panel-block-head">
+            <h2 class="tip" data-tip="Active llama-server processes managed by Lemur"><span class="accent">›</span> running</h2>
+            <div class="running-head-actions">
+              <button type="button" id="btn-lan-access" class="btn btn-ghost btn-tiny tip" data-tip="Restart loaded models so other devices on your local network can connect. No authentication is added." aria-pressed="false">lan:off</button>
+              <button type="button" id="btn-unload-all" class="btn btn-danger btn-tiny tip" data-tip="Stop every running/starting server and free GPU memory">unload_all()</button>
+            </div>
+          </div>
+          <div id="server-list" class="server-list">
+            <p class="muted empty-hint">// none</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+  </div>
+
+  <div id="analyzer-overlay" class="analyzer-overlay hidden" aria-hidden="true">
+    <section class="analyzer" role="dialog" aria-label="Process analyzer">
+      <header class="az-head">
+        <button type="button" id="btn-az-back" class="btn btn-ghost tip" data-tip="Return to the main control panel">← back</button>
+        <div class="az-title">
+          <h2 class="tip" data-tip="Live telemetry from llama-server, nvidia-smi, and process RSS">process analyzer</h2>
+          <p id="az-subtitle" class="muted">live llama-server telemetry</p>
+        </div>
+        <label class="az-label tip" for="az-server-select" data-tip="Which running llama-server to inspect">server</label>
+        <select id="az-server-select" class="tip" data-tip="Select a running server instance"></select>
+        <span id="az-pulse" class="az-pulse tip" data-tip="Auto-refreshes once per second while this page is open">●</span>
+        <button type="button" id="btn-az-live" class="btn btn-ghost tip" data-tip="Live streaming view of hub-proxied model input / thinking / output (Codex & chat via hub)">[live io]</button>
+        <button type="button" id="btn-az-refresh" class="btn btn-ghost tip" data-tip="Refresh analyzer data now">[refresh]</button>
+      </header>
+
+      <div class="az-kpis" id="az-kpis"></div>
+
+      <div class="az-grid" id="az-grid">
+        <section class="az-panel" id="az-devices">
+          <h3 class="tip" data-tip="Per-GPU VRAM used by this process, GPU util, and host RAM (RSS). * = claimed via CUDA_VISIBLE_DEVICES."><span class="accent">›</span> devices / memory</h3>
+          <div id="az-devices-body" class="az-panel-body"></div>
+        </section>
+        <section class="az-panel" id="az-resources">
+          <div class="az-panel-head">
+            <h3 class="tip" data-tip="VRAM, host RSS, and claimed-GPU utilization. Shorter histories stretch to fill the chart."><span class="accent">›</span> vram / util</h3>
+            <label class="az-win tip" data-tip="X-axis window">
+              <span id="az-res-win-lbl">30m</span>
+              <input type="range" id="az-res-win" min="30" max="1800" step="30" value="1800">
+            </label>
+          </div>
+          <div id="az-resources-body" class="az-panel-body"></div>
+        </section>
+        <section class="az-panel az-timeline" id="az-timeline">
+          <div class="az-panel-head">
+            <h3 class="tip" data-tip="Context fill and gen t/s while the model is busy (idle gaps omitted). Shorter histories stretch to fill the chart."><span class="accent">›</span> ctx / gen</h3>
+            <label class="az-win tip" data-tip="X-axis window">
+              <span id="az-tl-win-lbl">30m</span>
+              <input type="range" id="az-tl-win" min="30" max="1800" step="30" value="1800">
+            </label>
+          </div>
+          <div id="az-timeline-body" class="az-panel-body"></div>
+        </section>
+      </div>
+
+      <div id="az-io" class="az-io hidden" aria-hidden="true">
+        <header class="az-io-head">
+          <button type="button" id="btn-az-io-back" class="btn btn-ghost tip" data-tip="Return to analyzer telemetry">← telemetry</button>
+          <div class="az-io-title">
+            <h3>model i/o</h3>
+            <p id="az-io-subtitle" class="muted">hub-proxied streams</p>
+          </div>
+          <button type="button" id="btn-az-io-live" class="btn btn-ghost tip" data-tip="Follow the latest / in-flight request">[follow live]</button>
+        </header>
+        <div class="az-io-split">
+          <section class="az-io-pane">
+            <h4>input</h4>
+            <pre id="az-io-input" class="az-io-pre"></pre>
+          </section>
+          <section class="az-io-pane">
+            <h4>output <span class="muted">(thinking + answer)</span></h4>
+            <div id="az-io-output" class="az-io-out">
+              <pre id="az-io-thinking" class="az-io-pre az-io-thinking"></pre>
+              <pre id="az-io-answer" class="az-io-pre az-io-answer"></pre>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="chat-overlay" class="chat-overlay hidden" aria-hidden="true">
+    <div class="chat-backdrop" id="chat-backdrop"></div>
+    <section id="chat-section" class="chat-panel" role="dialog" aria-label="Chat">
+      <header class="chat-head">
+        <button type="button" id="btn-close-chat" class="btn btn-ghost chat-back tip" data-tip="Close the chat playground">← back</button>
+        <div class="chat-title">
+          <h2 class="tip" data-tip="Quick OpenAI-compatible chat against a running server (not a full agent)">chat</h2>
+          <p id="chat-subtitle" class="chat-subtitle muted">pick a running server</p>
+        </div>
+        <label class="chat-model-label tip" for="chat-server-select" data-tip="Which running server receives chat messages">model</label>
+        <select id="chat-server-select"></select>
+        <button type="button" id="btn-clear-chat" class="btn btn-ghost tip" data-tip="Clear the local chat transcript (does not unload the model)">clear</button>
+      </header>
+      <div id="chat-messages" class="chat-messages">
+        <div id="chat-empty" class="chat-empty">
+          <p class="accent">›_</p>
+          <p>Send a message to test the running model.</p>
+          <p class="muted">This is a quick playground — codex is for real work.</p>
+        </div>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <textarea id="chat-input" rows="2" placeholder="Message the model…" required></textarea>
+        <button type="submit" class="btn btn-primary tip" id="btn-chat-send" data-tip="Send message to the selected running server (Enter; Shift+Enter for newline)">send</button>
+      </form>
+    </section>
+  </div>
+
+  <dialog id="settings-dialog" class="settings-dialog">
+    <form method="dialog" id="settings-form">
+      <h2 class="tip" data-tip="Persisted in ~/.config/lemur/state.json"><span class="accent">›</span> settings</h2>
+
+      <h3 class="settings-section tip" data-tip="Appearance settings saved in ~/.config/lemur/state.json">ui</h3>
+      <div class="field">
+        <label for="settings-font-size" class="tip" data-tip="Base UI font size (12–20px). Applies immediately and persists after save.">font_size</label>
+        <div class="font-size-row">
+          <input type="range" id="settings-font-size" min="12" max="20" step="1" value="15">
+          <span id="settings-font-size-val" class="font-size-val">15px</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section tip" data-tip="llama-server binary and model discovery options">server</h3>
+      <div class="field">
+        <label for="settings-binary" class="tip" data-tip="Path to the llama-server executable used to launch models">llama-server</label>
+        <input type="text" id="settings-binary" required>
+      </div>
+      <div class="field">
+        <label for="settings-diffusion-bin" class="tip" data-tip="llama-diffusion-gemma-visual-server from Unsloth / llama.cpp PR #24423. Used automatically for diffusion-gemma GGUFs.">diffusion-visual</label>
+        <input type="text" id="settings-diffusion-bin">
+      </div>
+      <div class="field">
+        <label for="settings-dream-python" class="tip" data-tip="Python with torch+transformers for Dream HF models. Leave empty to auto-detect (Hub venv, then ~/miniconda3).">dream-python</label>
+        <input type="text" id="settings-dream-python" placeholder="auto">
+      </div>
+      <div class="field">
+        <label for="settings-scan-root" class="tip" data-tip="Root directory recursively scanned for .gguf files and HF model folders">scan_root</label>
+        <input type="text" id="settings-scan-root" required>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="settings-min-size" class="tip" data-tip="Ignore GGUF files smaller than this (filters vocab stubs / tiny shards)">min_size_mb</label>
+          <input type="number" id="settings-min-size" min="1">
+        </div>
+        <div class="field">
+          <label for="settings-default-ctx" class="tip" data-tip="Default context size pre-selected in the launch form">default_ctx</label>
+          <div class="num-wrap">
+            <input type="number" id="settings-default-ctx" min="512" max="1048576" step="1">
+            <div class="num-steppers" aria-hidden="true">
+              <button type="button" class="num-step" data-target="settings-default-ctx" data-dir="1">▴</button>
+              <button type="button" class="num-step" data-target="settings-default-ctx" data-dir="-1">▾</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p id="settings-binary-status" class="muted"></p>
+      <div class="dialog-actions">
+        <button type="button" id="btn-settings-cancel" class="btn btn-ghost tip" data-tip="Discard changes and close">cancel</button>
+        <button type="submit" class="btn btn-primary tip" data-tip="Write settings to ~/.config/lemur/state.json and rescan models">save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="logs-dialog" class="logs-dialog">
+    <h2 class="tip" data-tip="Recent stdout/stderr from the selected llama-server process"><span class="accent">›</span> logs</h2>
+    <pre id="logs-content"></pre>
+    <button type="button" id="btn-close-logs" class="btn btn-ghost tip" data-tip="Close the logs dialog">[close]</button>
+  </dialog>
+
+  <script src="app.js?v=20260822a"></script>
+</body>
+</html>
