@@ -2,26 +2,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APPS_DIR="$HOME/.local/share/applications"
-DESKTOP_DIR="${XDG_DESKTOP_DIR:-$HOME/Desktop}"
+BIN_DIR="${LEMUR_BIN_DIR:-$HOME/.local/bin}"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+APPS_DIR="$DATA_DIR/applications"
+ICON_DIR="$DATA_DIR/icons/hicolor/scalable/apps"
 
-chmod +x "$ROOT/scripts/run.sh"
+mkdir -p "$APPS_DIR" "$ICON_DIR"
 
-mkdir -p "$APPS_DIR" "$DESKTOP_DIR"
-
-sed "s|@ROOT@|$ROOT|g" "$ROOT/lemur.desktop.in" > "$ROOT/lemur.desktop"
-
-ln -sf "$ROOT/lemur.desktop" "$APPS_DIR/lemur.desktop"
-ln -sf "$ROOT/lemur.desktop" "$DESKTOP_DIR/Lemur.desktop"
+sed "s|@BIN@|$BIN_DIR|g" "$ROOT/lemur.desktop.in" > "$APPS_DIR/lemur.desktop"
+cp "$ROOT/assets/icon.svg" "$ICON_DIR/lemur.svg"
+chmod 0644 "$APPS_DIR/lemur.desktop" "$ICON_DIR/lemur.svg"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APPS_DIR"
 fi
 
-if command -v gio >/dev/null 2>&1; then
-  gio set "$DESKTOP_DIR/Lemur.desktop" metadata::trusted true 2>/dev/null || true
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t "$DATA_DIR/icons/hicolor" >/dev/null 2>&1 || true
 fi
 
-echo "Installed desktop shortcuts (symlinked to repo — edits apply immediately):"
+echo "Installed the Lemur application-menu entry:"
 echo "  $APPS_DIR/lemur.desktop"
-echo "  $DESKTOP_DIR/Lemur.desktop"

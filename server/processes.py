@@ -13,110 +13,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# #region agent log
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEBUG_LOG = _REPO_ROOT / ".cursor" / "debug-af2613.log"
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        with _DEBUG_LOG.open("a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "sessionId": "af2613",
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-    except OSError:
-        pass
-
-
-# #endregion
-
 from server import gguf_meta
 from server import gpu as gpu_mod
 from server import models as model_scan
 from server.aliases import model_alias
 from server.codex import codex_command
 from server.config import CONFIG_DIR, CONVERTED_DIR, ensure_config_dir, get_settings
-from server.diffusion import resolve_visual_bin
-
-DREAM_LOCAL_DIR = CONFIG_DIR / "dream-local"
-
-
-def materialize_dream_model_dir(source: Path) -> Path:
-    """Return a Dream HF dir safe for transformers trust_remote_code.
-
-    Hugging Face hub snapshots symlink files into `blobs/`. Transformers 5.x
-    resolves relative imports from the blob path and then looks for sibling
-    modules next to the blob (missing). Copy small files and hardlink large
-    weight shards into ~/.config/lemur/dream-local/<name>.
-    """
-    source = source.resolve()
-    if not source.is_dir():
-        raise FileNotFoundError(f"Dream model directory not found: {source}")
-
-    # Already a real tree (no hub blob symlinks among .py modules).
-    py_files = list(source.glob("*.py"))
-    if py_files and not any(p.is_symlink() for p in py_files):
-        return source
-
-    ensure_config_dir()
-    repo = model_scan.hf_hub_repo_from_path(source)
-    leaf = (repo or source.name).replace("/", "--")
-    dest = DREAM_LOCAL_DIR / leaf
-    marker = dest / ".lemur_source"
-    src_key = str(source)
-    if dest.is_dir() and marker.is_file() and marker.read_text().strip() == src_key:
-        # Refresh if any source mtime is newer than marker.
-        try:
-            if marker.stat().st_mtime >= max(
-                (p.stat().st_mtime for p in source.iterdir()), default=0
-            ):
-                return dest
-        except OSError:
-            pass
-
-    if dest.exists():
-        import shutil
-
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-
-    for item in source.iterdir():
-        if item.name.startswith("."):
-            continue
-        target = dest / item.name
-        try:
-            real = item.resolve()
-            size = real.stat().st_size
-        except OSError:
-            continue
-        # Large tensors: hardlink when possible (same filesystem as HF cache).
-        if size >= 8 * 1024 * 1024:
-            try:
-                os.link(real, target)
-                continue
-            except OSError:
-                pass
-        import shutil
-
-        shutil.copy2(real, target)
-
-    marker.write_text(src_key)
-    return dest
-
-
-_DREAM_PY_CACHE: dict[str, str | None] = {}
-_DREAM_PY_PROBE: dict[str, bool] = {}
 _HF_CONVERT_PY_CACHE: dict[str, str | None] = {}
 _HF_CONVERT_PY_PROBE: dict[str, bool] = {}
 
@@ -141,8 +43,8 @@ def _python_torch_ok(python: str) -> bool:
 def resolve_hf_convert_python(configured: str | None = None) -> str | None:
     """Pick a Python that can import torch for HF → GGUF conversion.
 
-    The Hub API venv and /usr/bin/python3 usually lack torch; prefer miniconda
-    or an explicit HF_CONVERT_PYTHON / dream_python when they work.
+    Use an explicit HF_CONVERT_PYTHON when the application environment does
+    not contain torch.
     """
     key = (configured or "").strip() or os.environ.get("HF_CONVERT_PYTHON", "") or ""
     if key in _HF_CONVERT_PY_CACHE:
@@ -154,25 +56,14 @@ def resolve_hf_convert_python(configured: str | None = None) -> str | None:
             _HF_CONVERT_PY_CACHE[key] = p
             return p
 
-    home = Path.home()
     cands: list[str] = []
     if configured and str(configured).strip():
         cands.append(str(Path(configured).expanduser()))
-    for env_key in ("HF_CONVERT_PYTHON", "DREAM_PYTHON"):
+    for env_key in ("HF_CONVERT_PYTHON",):
         env = os.environ.get(env_key)
         if env:
             cands.append(str(Path(env).expanduser()))
-    cands.extend(
-        [
-            str(home / "miniconda3/bin/python3"),
-            str(home / "miniconda3/bin/python"),
-            str(home / "anaconda3/bin/python3"),
-            str(CONFIG_DIR / "dream-venv/bin/python"),
-            str(CONFIG_DIR / "dream-venv/bin/python3"),
-            sys.executable,
-            "python3",
-        ]
-    )
+    cands.extend([sys.executable, "python3"])
 
     seen: set[str] = set()
     for raw in cands:
@@ -188,100 +79,6 @@ def resolve_hf_convert_python(configured: str | None = None) -> str | None:
 
     _HF_CONVERT_PY_CACHE[key] = None
     return None
-
-
-def _python_dream_ok(python: str) -> bool:
-    """One subprocess: torch + transformers present, prefer transformers < 5."""
-    if python in _DREAM_PY_PROBE:
-        return _DREAM_PY_PROBE[python]
-    try:
-        r = subprocess.run(
-            [
-                python,
-                "-c",
-                "import torch, transformers\n"
-                "v = transformers.__version__.split('.')\n"
-                "raise SystemExit(0 if int(v[0]) < 5 else 2)",
-            ],
-            capture_output=True,
-            timeout=45,
-        )
-        ok = r.returncode in (0, 2)  # 2 = has deps but transformers>=5
-        # Prefer <5; treat >=5 as usable fallback only when nothing else works.
-        _DREAM_PY_PROBE[python] = r.returncode == 0
-        # Stash soft-ok separately via return codes below.
-        if r.returncode == 0:
-            _DREAM_PY_PROBE[python] = True
-        elif r.returncode == 2:
-            _DREAM_PY_PROBE[python] = False  # not preferred
-            # Mark as soft-capable with a sentinel key.
-            _DREAM_PY_PROBE[python + "#soft"] = True
-        else:
-            _DREAM_PY_PROBE[python] = False
-            _DREAM_PY_PROBE[python + "#soft"] = False
-        return _DREAM_PY_PROBE[python]
-    except (OSError, subprocess.TimeoutExpired):
-        _DREAM_PY_PROBE[python] = False
-        _DREAM_PY_PROBE[python + "#soft"] = False
-        return False
-
-
-def resolve_dream_python(configured: str | None = None) -> str | None:
-    """Pick a Python that can import torch + transformers (Dream HF path).
-
-    Results are cached — probing imports torch and must not run on every
-    /api/settings hit (that stalled scripts/run.sh readiness).
-    """
-    key = (configured or "").strip() or os.environ.get("DREAM_PYTHON", "") or ""
-    if key in _DREAM_PY_CACHE:
-        return _DREAM_PY_CACHE[key]
-
-    # Trust an explicit existing interpreter path without probing (fast path for
-    # settings UI / launch readiness). Full probe still runs on first Dream spawn
-    # via the same cache after _python_dream_ok fills it.
-    if key:
-        p = str(Path(key).expanduser())
-        if Path(p).is_file():
-            _DREAM_PY_CACHE[key] = p
-            return p
-
-    cands: list[str] = []
-    if configured and str(configured).strip():
-        cands.append(str(Path(configured).expanduser()))
-    env = os.environ.get("DREAM_PYTHON")
-    if env:
-        cands.append(str(Path(env).expanduser()))
-    # Prefer the dedicated Dream venv before the Hub API venv.
-    home = Path.home()
-    cands.extend(
-        [
-            str(CONFIG_DIR / "dream-venv/bin/python"),
-            str(CONFIG_DIR / "dream-venv/bin/python3"),
-            sys.executable,
-            str(home / "miniconda3/bin/python3"),
-            str(home / "miniconda3/bin/python"),
-            str(home / "anaconda3/bin/python3"),
-            "python3",
-        ]
-    )
-
-    seen: set[str] = set()
-    soft: str | None = None
-    for raw in cands:
-        p = str(Path(raw).expanduser()) if raw not in ("python3", "python") else raw
-        if p in seen:
-            continue
-        seen.add(p)
-        if raw not in ("python3", "python") and not Path(p).is_file():
-            continue
-        if _python_dream_ok(p):
-            _DREAM_PY_CACHE[key] = p
-            return p
-        if soft is None and _DREAM_PY_PROBE.get(p + "#soft"):
-            soft = p
-
-    _DREAM_PY_CACHE[key] = soft
-    return soft
 
 # Overflow when primary GPU VRAM is not enough.
 # none = primary only; ram = CPU/RAM; gpu = other GPUs; both = other GPUs + RAM
@@ -314,8 +111,6 @@ class ServerInstance:
     mtp: bool = False
     mtp_draft_n: int = 2
     vision: bool = False
-    diffusion: bool = False
-    dream: bool = False
     vllm: bool = False
     devices: str = ""  # CUDA_VISIBLE_DEVICES actually used
     pid: int | None = None
@@ -341,8 +136,6 @@ class ServerInstance:
             "mtp": bool(self.mtp),
             "mtp_draft_n": int(self.mtp_draft_n) if self.mtp else 0,
             "vision": bool(self.vision),
-            "diffusion": bool(self.diffusion),
-            "dream": bool(self.dream),
             "vllm": bool(self.vllm),
             "devices": self.devices or str(self.gpu),
             "pid": self.pid,
@@ -356,7 +149,6 @@ class ServerInstance:
 
 _lock = threading.Lock()
 _servers: dict[str, ServerInstance] = {}
-_last_adopt_scan = 0.0
 
 
 def _clamp_mtp_draft_n(n: int | None) -> int:
@@ -367,163 +159,7 @@ def _clamp_mtp_draft_n(n: int | None) -> int:
     return max(1, min(6, v))
 
 
-def _parse_llama_cmdline(cmdline: str) -> dict:
-    """Parse llama-server argv into known flags."""
-    parts = cmdline.split()
-    out: dict = {
-        "model_path": "",
-        "port": 8080,
-        "ctx": 0,
-        "ngl": 999,
-        "host": "127.0.0.1",
-        "alias": "",
-        "mtp": False,
-        "mtp_draft_n": 2,
-        "vision": False,
-    }
-    i = 0
-    while i < len(parts):
-        tok = parts[i]
-        nxt = parts[i + 1] if i + 1 < len(parts) else ""
-        if tok in ("-m", "--model") and nxt:
-            out["model_path"] = nxt
-            i += 2
-            continue
-        if tok in ("--port",) and nxt:
-            try:
-                out["port"] = int(nxt)
-            except ValueError:
-                pass
-            i += 2
-            continue
-        if tok in ("-c", "--ctx-size") and nxt:
-            try:
-                out["ctx"] = int(nxt)
-            except ValueError:
-                pass
-            i += 2
-            continue
-        if tok in ("-ngl", "--gpu-layers", "--n-gpu-layers") and nxt:
-            try:
-                out["ngl"] = int(nxt)
-            except ValueError:
-                pass
-            i += 2
-            continue
-        if tok in ("--host",) and nxt:
-            out["host"] = nxt
-            i += 2
-            continue
-        if tok in ("-a", "--alias") and nxt:
-            out["alias"] = nxt.split(",")[0]
-            i += 2
-            continue
-        if tok in ("--spec-type",) and nxt:
-            if nxt == "draft-mtp":
-                out["mtp"] = True
-            i += 2
-            continue
-        if tok in ("--spec-draft-n-max",) and nxt:
-            out["mtp_draft_n"] = _clamp_mtp_draft_n(nxt)
-            i += 2
-            continue
-        if tok in ("--mmproj",) and nxt:
-            out["vision"] = True
-            i += 2
-            continue
-        i += 1
-    return out
-
-
-def _read_proc_cuda_device(pid: int) -> int:
-    try:
-        env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-        for item in env:
-            if item.startswith(b"CUDA_VISIBLE_DEVICES="):
-                val = item.split(b"=", 1)[1].decode(errors="ignore").strip()
-                if val == "":
-                    return 0
-                return int(val.split(",")[0])
-    except (OSError, ValueError):
-        pass
-    return 0
-
-
-def adopt_external_servers() -> None:
-    """Pick up llama-server processes Hub no longer tracks (e.g. after restart)."""
-    global _last_adopt_scan
-    now = time.monotonic()
-    with _lock:
-        if now - _last_adopt_scan < 2.0:
-            return
-        _last_adopt_scan = now
-
-    try:
-        result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return
-
-    tracked_pids = {s.pid for s in list(_servers.values()) if s.pid}
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line or "pgrep" in line:
-            continue
-        try:
-            pid_s, cmdline = line.split(None, 1)
-            pid = int(pid_s)
-        except ValueError:
-            continue
-        if "llama-server" not in cmdline:
-            continue
-        if pid in tracked_pids:
-            continue
-        # Skip our own pgrep / wrappers
-        if "pgrep" in cmdline or "/bin/bash" in cmdline:
-            continue
-
-        parsed = _parse_llama_cmdline(cmdline)
-        model_path = parsed["model_path"]
-        if not model_path:
-            continue
-        name = Path(model_path).name
-        alias = (
-            parsed["alias"]
-            or model_scan.hf_hub_repo_from_path(model_path)
-            or model_alias(name)
-        )
-        sid = f"ext-{pid}"
-        with _lock:
-            if any(s.pid == pid for s in _servers.values()):
-                continue
-            if sid in _servers:
-                continue
-            _servers[sid] = ServerInstance(
-                id=sid,
-                model_path=model_path,
-                model_name=name,
-                alias=alias,
-                gpu=_read_proc_cuda_device(pid),
-                port=int(parsed["port"]),
-                ctx=int(parsed["ctx"] or 0),
-                ngl=int(parsed["ngl"]),
-                host=parsed["host"],
-                format="gguf",
-                mtp=bool(parsed.get("mtp")),
-                mtp_draft_n=_clamp_mtp_draft_n(parsed.get("mtp_draft_n")),
-                vision=bool(parsed.get("vision")),
-                pid=pid,
-                status="running",
-                process=None,
-            )
-
-
 def list_servers() -> list[ServerInstance]:
-    adopt_external_servers()
     with _lock:
         # Drop finished entries so UI doesn't keep ghosts
         dead = [
@@ -607,25 +243,6 @@ def _read_output(server: ServerInstance) -> None:
                 persisted.write(text + "\n")
             note_log_line(server.id, text)
             lower = text.lower()
-            # #region agent log
-            if any(
-                k in lower
-                for k in (
-                    "cudaMalloc failed",
-                    "out of memory",
-                    "failed to allocate",
-                    "kv cache",
-                    "listening",
-                    "model loaded",
-                )
-            ):
-                _agent_dbg(
-                    "A,D",
-                    "processes.py:_read_output",
-                    "llama load outcome",
-                    {"server_id": server.id, "line": text[:400]},
-                )
-            # #endregion
             if (
                 "listening" in lower
                 or "server is listening" in lower
@@ -708,7 +325,7 @@ def _ensure_gguf(server: ServerInstance, source: Path, fmt: str) -> Path:
             "convert_hf_to_gguf.py not found next to llama.cpp — cannot load HF models"
         )
 
-    settings_py = settings.get("hf_convert_python") or settings.get("dream_python")
+    settings_py = settings.get("hf_convert_python")
     py = resolve_hf_convert_python(
         str(settings_py).strip() if settings_py else None
     )
@@ -717,7 +334,7 @@ def _ensure_gguf(server: ServerInstance, source: Path, fmt: str) -> Path:
         raise RuntimeError(
             "No Python with torch found for HF → GGUF conversion. "
             "Install torch, or set hf_convert_python / HF_CONVERT_PYTHON "
-            "to an interpreter that has it (e.g. ~/miniconda3/bin/python3)."
+            "to an interpreter that has it."
         )
 
     server.status = "converting"
@@ -875,155 +492,6 @@ def _warn_cuda_capacity(server: ServerInstance, gguf: Path) -> None:
             server.logs.append(warning)
 
 
-def _spawn_diffusion(
-    server: ServerInstance,
-    gguf: Path,
-    env: dict,
-) -> None:
-    """Launch OpenAI-compat diffusion shim (Unsloth visual decoder)."""
-    settings = get_settings()
-    visual = resolve_visual_bin(settings.get("diffusion_visual_bin"))
-    if visual is None:
-        raise FileNotFoundError(
-            "DiffusionGemma needs llama-diffusion-gemma-visual-server "
-            "(from llama.cpp PR #24423 / Unsloth). Set diffusion_visual_bin "
-            "in settings or DG_VISUAL_BIN."
-        )
-
-    # Single-GPU only; visual server remaps CUDA_VISIBLE_DEVICES itself.
-    server.devices = str(server.gpu)
-    server.spill = "none"
-    server.mtp = False
-    server.vision = False
-    server.diffusion = True
-
-    maxtok = server.ctx if 0 < server.ctx <= 8192 else 0
-    repo_root = str(Path(__file__).resolve().parents[1])
-    cmd = [
-        sys.executable,
-        "-m",
-        "server.diffusion",
-        "--gguf",
-        str(gguf),
-        "--host",
-        server.host,
-        "--port",
-        str(server.port),
-        "--gpu",
-        str(server.gpu),
-        "--maxtok",
-        str(maxtok),
-        "--alias",
-        server.alias or model_alias(server.model_name),
-        "--visual-bin",
-        str(visual),
-    ]
-    server.logs.append(
-        f"spawn diffusion visual={visual.name} gpu={server.gpu} maxtok={maxtok or 'auto'}"
-    )
-    server.launch_cmd = shlex.join(cmd)
-    server.status = "starting"
-    # Drop inherited CVD so the shim/visual server own GPU selection.
-    env = dict(env)
-    env.pop("CUDA_VISIBLE_DEVICES", None)
-    env["DG_VISUAL_BIN"] = str(visual)
-    # Ensure `python -m server.diffusion` can import the package.
-    existing_pp = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        repo_root if not existing_pp else f"{repo_root}{os.pathsep}{existing_pp}"
-    )
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env=env,
-        start_new_session=True,
-    )
-    server.process = proc
-    server.pid = proc.pid
-    threading.Thread(target=_read_output, args=(server,), daemon=True).start()
-    threading.Thread(target=_watch_process, args=(server,), daemon=True).start()
-
-
-def _dream_max_new_tokens(ctx: int) -> int:
-    """Map Hub ctx to Dream max_new_tokens (diffusion canvas length)."""
-    # Official examples use 512–768; ctx is a useful upper bound but Dream
-    # slows / OOMs if the canvas is huge. Cap at 2048.
-    if ctx <= 0:
-        return 768
-    return max(64, min(int(ctx), 2048))
-
-
-def _spawn_dream(
-    server: ServerInstance,
-    model_dir: Path,
-    env: dict,
-) -> None:
-    """Launch OpenAI-compat Dream Transformers shim."""
-    settings = get_settings()
-    py = resolve_dream_python(settings.get("dream_python"))
-    if py is None:
-        raise FileNotFoundError(
-            "Dream needs a Python with torch+transformers "
-            "(official: transformers≈4.46 + torch with CUDA). "
-            "Install them, or set dream_python / DREAM_PYTHON to that interpreter."
-        )
-
-    server.devices = str(server.gpu)
-    server.spill = "none"
-    server.mtp = False
-    server.vision = False
-    server.dream = True
-    server.diffusion = True  # analyzer / UI treat as diffusion-family
-
-    max_new = _dream_max_new_tokens(server.ctx)
-    repo_root = str(Path(__file__).resolve().parents[1])
-    cmd = [
-        py,
-        "-m",
-        "server.dream",
-        "--model",
-        str(model_dir),
-        "--host",
-        server.host,
-        "--port",
-        str(server.port),
-        "--gpu",
-        str(server.gpu),
-        "--max-new-tokens",
-        str(max_new),
-        "--alias",
-        server.alias or model_alias(server.model_name),
-    ]
-    server.logs.append(
-        f"spawn dream transformers python={py} gpu={server.gpu} "
-        f"max_new_tokens={max_new}"
-    )
-    server.launch_cmd = shlex.join(cmd)
-    server.status = "starting"
-    env = dict(env)
-    env.pop("CUDA_VISIBLE_DEVICES", None)
-    existing_pp = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        repo_root if not existing_pp else f"{repo_root}{os.pathsep}{existing_pp}"
-    )
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env=env,
-        start_new_session=True,
-    )
-    server.process = proc
-    server.pid = proc.pid
-    threading.Thread(target=_read_output, args=(server,), daemon=True).start()
-    threading.Thread(target=_watch_process, args=(server,), daemon=True).start()
-
-
 def _spawn_llama(
     server: ServerInstance,
     gguf: Path,
@@ -1073,24 +541,12 @@ def _spawn_llama(
         server.ctx >= 131072
         and gguf_meta.uses_qwen35_q8_kv(arch, server.ctx, gguf.stat().st_size)
     )
-    # 128K + Q8 fits a 5090 fully; forcing --fit off there avoids a ~2×
-    # decode hit from CPU leftovers. 256K does not fit — keep RAM --fit.
-    force_full_gpu = (
-        qwen35_long_context
-        and len(devices) == 1
-        and spill in ("ram", "both", "none")
-        and server.ctx <= 131072
-    )
-    # #region agent log
-    primary_free_mib = 0.0
-    est_total_mib = 0.0
-    est_kv_mib = 0.0
-    fits_primary = False
+    # Avoid CPU layer placement when the estimated configuration fits the
+    # selected GPU with a safety reserve.
+    force_full_gpu = False
     try:
         gpus = gpu_mod.list_gpus()
         primary = next((g for g in gpus if g.index == server.gpu), None)
-        if primary is not None:
-            primary_free_mib = float(primary.memory_free_mib)
         kv_elem = 1 if qwen35_long_context else 2
         est = gguf_meta.estimate_vram_mib(
             weights_bytes=gguf.stat().st_size,
@@ -1100,32 +556,14 @@ def _spawn_llama(
             mtp_draft_n=server.mtp_draft_n,
             kv_bytes_per_elem=kv_elem,
         )
-        est_total_mib = float(est["total_mib"])
-        est_kv_mib = float(est["kv_mib"])
-        fits_primary = (
-            primary is not None and est_total_mib + 1024.0 <= primary_free_mib
+        force_full_gpu = bool(
+            qwen35_long_context
+            and len(devices) == 1
+            and primary is not None
+            and float(est["total_mib"]) + 1024.0 <= float(primary.memory_free_mib)
         )
     except (OSError, KeyError, TypeError, ValueError, AttributeError):
         pass
-    _agent_dbg(
-        "A,C,D",
-        "processes.py:_spawn_llama:force_full_gpu",
-        "full_gpu decision",
-        {
-            "ctx": server.ctx,
-            "spill": spill,
-            "devices": list(devices),
-            "qwen35_long_context": qwen35_long_context,
-            "primary_free_mib": round(primary_free_mib, 1),
-            "est_total_mib": round(est_total_mib, 1),
-            "est_kv_mib": round(est_kv_mib, 1),
-            "fits_primary": fits_primary,
-            "force_full_gpu": force_full_gpu,
-            "runId": "post-fix",
-            "mtp": server.mtp,
-        },
-    )
-    # #endregion
 
     # Spill modes use auto layer placement; gpu-only keeps explicit -ngl.
     # --fit cannot run if -ts/--tensor-split is set (llama.cpp aborts fit).
@@ -1151,9 +589,7 @@ def _spawn_llama(
                 cmd.extend(["-ts", ts])
 
     if qwen35_long_context:
-        # The RTX 5090 hit an Xid 8 watchdog timeout while replaying a
-        # production request. These optional CUDA optimizations are the only
-        # correctness-neutral kernel changes in that path.
+        # Use the stable long-context CUDA path for variable request shapes.
         env["GGML_CUDA_DISABLE_GRAPHS"] = "1"
         env["GGML_CUDA_PDL"] = "0"
     if qwen38_nvfp4_mtp:
@@ -1259,10 +695,7 @@ def _spawn_vllm(server: ServerInstance, source: Path, binary: str, env: dict) ->
     server.vllm = True
     server.devices = str(server.gpu)
     env["CUDA_VISIBLE_DEVICES"] = server.devices
-    # FlashInfer 0.6.14 reads the host CUDA 12.8 compiler for its sampling
-    # JIT and rejects SM120, even though this vLLM environment uses CUDA 13.
-    # Use vLLM's built-in sampler so RTX 5090 startup is reliable. The native
-    # CUTLASS NVFP4 GEMM remains active.
+    # Use vLLM's built-in sampler to avoid a host-toolkit JIT dependency.
     env["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
     # The 27B model needs just over 5 GiB of FP8 KV cache for 128K. Keep
@@ -1373,37 +806,10 @@ def _boot_server(server: ServerInstance, source: Path, fmt: str) -> None:
         if fmt == "vllm":
             _spawn_vllm(server, source, str(settings.get("vllm_bin") or ""), env)
             return
-        if server.dream or gguf_meta.model_looks_dream(str(source)):
-            if fmt == "gguf":
-                raise RuntimeError(
-                    "Dream GGUF is not served by lemur yet — load the Hugging Face "
-                    "safetensors directory (e.g. Dream-org/Dream-Coder-v0-Instruct-7B) "
-                    "so the Transformers diffusion_generate shim can run it."
-                )
-            if not source.is_dir():
-                raise FileNotFoundError(f"Dream HF model directory not found: {source}")
-            server.dream = True
-            server.diffusion = True
-            local = materialize_dream_model_dir(source)
-            if local != source.resolve():
-                server.logs.append(f"dream local tree: {local}")
-            _spawn_dream(server, local, env)
-            return
-
         gguf = _ensure_gguf(server, source, fmt)
         if server.status == "stopped":
             return
-        arch = gguf_meta.read_gguf_arch(str(gguf))
-        if gguf_meta.model_looks_dream(str(gguf), arch):
-            raise RuntimeError(
-                "Dream GGUF is not served by lemur yet — load the Hugging Face "
-                "safetensors directory so the Transformers shim can run it."
-            )
-        if gguf_meta.model_looks_diffusion(str(gguf), arch) or server.diffusion:
-            server.diffusion = True
-            _spawn_diffusion(server, gguf, env)
-        else:
-            _spawn_llama(server, gguf, binary, env)
+        _spawn_llama(server, gguf, binary, env)
     except Exception as e:
         server.status = "failed"
         server.logs.append(f"error: {e}")
@@ -1443,15 +849,12 @@ def start_server(
         raise FileNotFoundError(f"HF model directory not found: {model_path}")
 
     arch = gguf_meta.read_gguf_arch(str(source)) if fmt == "gguf" else None
-    dream = gguf_meta.model_looks_dream(str(source), arch)
-    diffusion = (not dream) and gguf_meta.model_looks_diffusion(str(source), arch)
-
     binary = settings["llama_server_path"]
     if fmt == "vllm":
         vllm_bin = str(settings.get("vllm_bin") or "")
         if not Path(vllm_bin).is_file():
             raise FileNotFoundError(f"vLLM executable not found: {vllm_bin}")
-    elif not dream and not diffusion and not Path(binary).is_file():
+    elif not Path(binary).is_file():
         raise FileNotFoundError(f"llama-server not found: {binary}")
 
     ctx = ctx if ctx is not None else int(settings["default_ctx"])
@@ -1472,30 +875,6 @@ def start_server(
         # native CPU KV-cache offload. Treat "both" as RAM on one GPU.
         spill = "ram" if spill in ("ram", "both") else "none"
         vision = bool(vision and info and info.has_mmproj)
-
-    if dream or diffusion:
-        # Diffusion-family path: no MTP / mmproj / multi-GPU spill.
-        mtp = False
-        vision = False
-        spill = "none"
-        if diffusion:
-            visual = resolve_visual_bin(settings.get("diffusion_visual_bin"))
-            if visual is None:
-                raise FileNotFoundError(
-                    "DiffusionGemma needs llama-diffusion-gemma-visual-server "
-                    "(llama.cpp PR #24423 / Unsloth build). Set diffusion_visual_bin "
-                    f"in settings (tried: {settings.get('diffusion_visual_bin')!r})."
-                )
-        if dream and fmt == "gguf":
-            raise FileNotFoundError(
-                "Dream GGUF is not supported — select the Hugging Face "
-                "Dream-org/... safetensors folder instead."
-            )
-        if dream and resolve_dream_python(settings.get("dream_python")) is None:
-            raise FileNotFoundError(
-                "Dream needs a Python with torch+transformers. "
-                "Install them or set dream_python / DREAM_PYTHON."
-            )
 
     if vision and fmt == "gguf":
         mmproj = model_scan.find_sibling_mmproj(source)
@@ -1535,14 +914,12 @@ def start_server(
         mtp=mtp,
         mtp_draft_n=draft_n,
         vision=vision,
-        diffusion=bool(diffusion or dream),
-        dream=bool(dream),
         vllm=fmt == "vllm",
         devices=",".join(str(d) for d in devices),
-        status="starting" if dream else ("converting" if fmt == "hf" else "starting"),
+        status="converting" if fmt == "hf" else "starting",
     )
 
-    if fmt == "gguf" and not diffusion and not dream:
+    if fmt == "gguf":
         _warn_cuda_capacity(instance, source.resolve())
 
     with _lock:
@@ -1562,7 +939,6 @@ def stop_server(server_id: str) -> bool:
             return False
         server.status = "stopped"
         proc = server.process
-        pid = server.pid
         if proc and proc.poll() is None:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -1575,23 +951,6 @@ def stop_server(server_id: str) -> bool:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except (ProcessLookupError, OSError):
                     proc.kill()
-        elif pid:
-            # Adopted external process (no Popen handle)
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-            for _ in range(20):
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.25)
-                except OSError:
-                    break
-            else:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
-                    pass
         return True
 
 

@@ -50,8 +50,6 @@ class CapacityTests(unittest.TestCase):
                 patch.object(processes, "get_settings", return_value=settings),
                 patch.object(processes.model_scan, "find_model", return_value=info),
                 patch.object(processes.gguf_meta, "read_gguf_arch", return_value={}),
-                patch.object(processes.gguf_meta, "model_looks_dream", return_value=False),
-                patch.object(processes.gguf_meta, "model_looks_diffusion", return_value=False),
                 patch.object(processes, "_device_list", return_value=[0]),
                 patch.object(processes, "_port_free", return_value=True),
                 patch.object(
@@ -328,6 +326,11 @@ class CommandTests(unittest.TestCase):
             ),
             patch.object(processes.gguf_meta, "read_gguf_arch", return_value=arch),
             patch.object(
+                processes.gguf_meta,
+                "estimate_vram_mib",
+                return_value={"total_mib": 30000.0, "kv_mib": 5000.0},
+            ),
+            patch.object(
                 Path,
                 "stat",
                 return_value=SimpleNamespace(st_size=model_size),
@@ -425,6 +428,11 @@ class CommandTests(unittest.TestCase):
                 return_value={"architecture": "qwen35"},
             ),
             patch.object(
+                processes.gguf_meta,
+                "estimate_vram_mib",
+                return_value={"total_mib": 30000.0, "kv_mib": 5000.0},
+            ),
+            patch.object(
                 Path,
                 "stat",
                 return_value=SimpleNamespace(st_size=24 * 1024**3),
@@ -440,7 +448,7 @@ class CommandTests(unittest.TestCase):
             )
 
         cmd = popen.call_args.args[0]
-        # Q8 fits the 5090; avoid --fit CPU leftovers that halve decode speed.
+        # The estimate fits with a reserve, so avoid CPU layer placement.
         self.assertEqual(cmd[cmd.index("-ngl") + 1], "999")
         self.assertEqual(cmd[cmd.index("--fit") + 1], "off")
         self.assertNotIn("--fit-target", cmd)
@@ -698,107 +706,6 @@ class FavoriteTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
 
 
-class DiffusionTests(unittest.TestCase):
-    def test_detects_diffusion_from_arch_and_name(self):
-        from server import gguf_meta
-
-        self.assertTrue(
-            gguf_meta.model_looks_diffusion(
-                "/x/foo.gguf", {"architecture": "diffusion-gemma"}
-            )
-        )
-        self.assertTrue(
-            gguf_meta.model_looks_diffusion(
-                "/models/diffusiongemma-26B-A4B-it-Q8_0.gguf", None
-            )
-        )
-        self.assertFalse(
-            gguf_meta.model_looks_diffusion("/models/gemma-4.gguf", {"architecture": "gemma4"})
-        )
-
-    def test_spawn_diffusion_launches_shim_not_llama_server(self):
-        proc = MagicMock(pid=321)
-        thread = MagicMock()
-        visual = Path("/tmp/llama-diffusion-gemma-visual-server")
-        with tempfile.TemporaryDirectory() as tmp:
-            model = Path(tmp) / "diffusiongemma-Q8_0.gguf"
-            model.write_bytes(b"GGUF")
-            with (
-                patch.object(processes, "resolve_visual_bin", return_value=visual),
-                patch.object(processes, "get_settings", return_value={}),
-                patch.object(processes.subprocess, "Popen", return_value=proc) as popen,
-                patch.object(processes.threading, "Thread", return_value=thread),
-            ):
-                server = _server(
-                    model_path=str(model),
-                    model_name=model.name,
-                    mtp=False,
-                    diffusion=True,
-                )
-                processes._spawn_diffusion(server, model, {})
-
-            cmd = popen.call_args.args[0]
-            env = popen.call_args.kwargs.get("env") or {}
-            self.assertTrue(cmd[0].endswith("python") or "python" in Path(cmd[0]).name)
-            self.assertEqual(cmd[1:3], ["-m", "server.diffusion"])
-            self.assertEqual(cmd[cmd.index("--gguf") + 1], str(model))
-            self.assertEqual(cmd[cmd.index("--visual-bin") + 1], str(visual))
-            self.assertIn("llm-hub", env.get("PYTHONPATH", ""))
-            self.assertTrue(server.diffusion)
-            self.assertFalse(server.mtp)
-            self.assertEqual(server.spill, "none")
-
-    def test_diffusion_timings_use_output_rate_not_parallel(self):
-        from server.diffusion import timings_from_stats
-
-        # 512 committed tokens in 2.0s wall, 8 steps × 256 canvas ⇒ parallel 1024 t/s
-        t = timings_from_stats(
-            {
-                "prompt_n": 40,
-                "predicted_n": 512,
-                "prompt_prepare_ms": 20.0,
-                "wall_ms": 2000.0,
-                "decode_ms": 1900.0,
-                "steps": 8,
-                "blocks": 2,
-                "canvas": 256,
-            }
-        )
-        self.assertTrue(t["diffusion"])
-        self.assertAlmostEqual(t["predicted_per_second"], 256.0, places=1)
-        self.assertAlmostEqual(t["diffusion_output_tok_s"], 256.0, places=1)
-        self.assertAlmostEqual(t["diffusion_parallel_tok_s"], 1024.0, places=1)
-        self.assertAlmostEqual(t["diffusion_effective_tok_s"], 256.0, places=1)
-
-    def test_diffusion_vram_estimate_ignores_spill_and_ar_kv(self):
-        from server import gguf_meta
-
-        # Old AR path claimed ~33 GiB at 8K for this weight size; diffusion should
-        # be ~weights + modest compute (~26–28 GiB), independent of spill.
-        weights = int(25.03 * 1024**3)
-        auto = gguf_meta.estimate_diffusion_vram_mib(weights_bytes=weights, maxtok=0)
-        explicit = gguf_meta.estimate_diffusion_vram_mib(
-            weights_bytes=weights, maxtok=8192, n_head=16
-        )
-        ar = gguf_meta.estimate_vram_mib(
-            weights_bytes=weights,
-            ctx=8192,
-            arch={
-                "n_layer": 30,
-                "n_attn_layer": 30,
-                "n_head_kv": 16,
-                "head_dim": 512,
-            },
-        )
-        self.assertLess(auto["total_mib"] / 1024.0, 28.0)
-        self.assertGreater(auto["total_mib"] / 1024.0, 25.0)
-        self.assertEqual(auto["kv_mib"], 0.0)
-        self.assertTrue(auto["diffusion"])
-        # Explicit 8K MAXTOK adds quadratic scores buffer, still far below AR KV.
-        self.assertLess(explicit["total_mib"], ar["total_mib"] * 0.9)
-        self.assertGreater(explicit["scratch_mib"], auto["scratch_mib"])
-
-
 class NativeVllmTests(unittest.TestCase):
     def test_detects_compressed_nvfp4_vlm(self):
         from server import models as model_scan
@@ -930,113 +837,6 @@ class NativeVllmTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("--max-num-batched-tokens") + 1], "4096")
             self.assertNotIn("--kv-offloading-size", cmd)
             self.assertIn("--language-model-only", cmd)
-
-
-class DreamTests(unittest.TestCase):
-    def test_detects_dream_from_hf_config_and_path(self):
-        from server import gguf_meta
-
-        self.assertTrue(
-            gguf_meta.model_looks_dream("/x/foo.gguf", {"architecture": "dream"})
-        )
-        self.assertTrue(
-            gguf_meta.model_looks_dream(
-                "/cache/models--Dream-org--Dream-Coder-v0-Instruct-7B/snapshots/abc",
-                None,
-            )
-        )
-        self.assertFalse(
-            gguf_meta.model_looks_dream("/models/qwen3.gguf", {"architecture": "qwen3"})
-        )
-        # Dream must not be classified as DiffusionGemma.
-        self.assertFalse(
-            gguf_meta.model_looks_diffusion(
-                "/cache/models--Dream-org--Dream-Coder-v0-Instruct-7B/x", None
-            )
-        )
-
-    def test_detects_dream_hf_dir(self):
-        from server import gguf_meta
-        from server import models as model_scan
-
-        with tempfile.TemporaryDirectory() as tmp:
-            d = Path(tmp) / "Dream-Coder"
-            d.mkdir()
-            (d / "config.json").write_text(
-                json.dumps(
-                    {
-                        "architectures": ["DreamModel"],
-                        "model_type": "Dream",
-                    }
-                )
-            )
-            (d / "model.safetensors").write_bytes(b"0" * (60 * 1024 * 1024))
-            self.assertTrue(model_scan._is_text_hf_dir(d))
-            self.assertTrue(gguf_meta.model_looks_dream(str(d)))
-
-    def test_spawn_dream_launches_transformers_shim(self):
-        proc = MagicMock(pid=654)
-        thread = MagicMock()
-        with tempfile.TemporaryDirectory() as tmp:
-            model = Path(tmp) / "dream-hf"
-            model.mkdir()
-            (model / "config.json").write_text(
-                json.dumps({"architectures": ["DreamModel"], "model_type": "Dream"})
-            )
-            with (
-                patch.object(processes, "get_settings", return_value={}),
-                patch.object(
-                    processes,
-                    "resolve_dream_python",
-                    return_value="/usr/bin/python3",
-                ),
-                patch.object(processes.subprocess, "Popen", return_value=proc) as popen,
-                patch.object(processes.threading, "Thread", return_value=thread),
-            ):
-                server = _server(
-                    model_path=str(model),
-                    model_name="Dream-org/Dream-Coder-v0-Instruct-7B",
-                    mtp=False,
-                    dream=True,
-                    diffusion=True,
-                    format="hf",
-                )
-                processes._spawn_dream(server, model, {})
-
-            cmd = popen.call_args.args[0]
-            env = popen.call_args.kwargs.get("env") or {}
-            self.assertEqual(cmd[1:3], ["-m", "server.dream"])
-            self.assertEqual(cmd[cmd.index("--model") + 1], str(model))
-            self.assertIn("llm-hub", env.get("PYTHONPATH", ""))
-            self.assertTrue(server.dream)
-            self.assertTrue(server.diffusion)
-            self.assertEqual(server.spill, "none")
-
-    def test_dream_timings_mark_dream_and_output_rate(self):
-        from server.dream import timings_from_stats
-
-        t = timings_from_stats(
-            {
-                "prompt_n": 32,
-                "predicted_n": 256,
-                "wall_ms": 2000.0,
-                "steps": 256,
-            }
-        )
-        self.assertTrue(t["dream"])
-        self.assertTrue(t["diffusion"])
-        self.assertAlmostEqual(t["predicted_per_second"], 128.0, places=1)
-        self.assertAlmostEqual(t["diffusion_output_tok_s"], 128.0, places=1)
-
-    def test_dream_vram_estimate(self):
-        from server import gguf_meta
-
-        weights = int(15.0 * 1024**3)
-        est = gguf_meta.estimate_dream_vram_mib(weights_bytes=weights, max_new_tokens=768)
-        self.assertTrue(est["dream"])
-        self.assertEqual(est["kv_mib"], 0.0)
-        self.assertGreater(est["total_mib"] / 1024.0, 15.0)
-        self.assertLess(est["total_mib"] / 1024.0, 20.0)
 
 
 class AnalyzerTimingTests(unittest.TestCase):

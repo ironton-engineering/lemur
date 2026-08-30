@@ -154,8 +154,6 @@ def note_api_timings(
         "gen_tps": gen_tps,
         "draft_n": timings.get("draft_n"),
         "draft_n_accepted": timings.get("draft_n_accepted"),
-        "diffusion": bool(timings.get("diffusion")),
-        "diffusion_parallel_tok_s": timings.get("diffusion_parallel_tok_s"),
     }
     _queries[server_id].append(q)
     live = _live_tps[server_id]
@@ -165,8 +163,6 @@ def note_api_timings(
     if prompt_tps is not None:
         live["prompt_tps"] = prompt_tps
         live["ts"] = time.time()
-    if timings.get("diffusion"):
-        live["diffusion"] = 1.0
     if timings.get("draft_n"):
         live["draft_n"] = float(timings["draft_n"])
         if timings.get("draft_n_accepted") is not None:
@@ -553,15 +549,6 @@ def analyze_server(server: processes.ServerInstance) -> dict:
             if q.get("draft_n_accepted") is not None:
                 draft_acc = int(q["draft_n_accepted"])
             break
-    is_diffusion = bool(live.get("diffusion")) or any(
-        q.get("diffusion") for q in recent
-    )
-    diffusion_parallel = None
-    for q in recent:
-        if q.get("diffusion_parallel_tok_s") is not None:
-            diffusion_parallel = round(float(q["diffusion_parallel_tok_s"]), 1)
-            break
-
     devices, all_gpus = _nvidia_snapshot(server.pid)
     claimed_idxs = {
         int(i)
@@ -652,8 +639,6 @@ def analyze_server(server: processes.ServerInstance) -> dict:
             "cache_tokens": cache_hits,
             "gpu_util": gpu_util,
             "busy": bool(busy),
-            "diffusion": is_diffusion,
-            "diffusion_parallel_tok_s": diffusion_parallel,
             "draft_n": draft_n,
             "draft_n_accepted": draft_acc,
             "mtp": bool(server.mtp) or (draft_n is not None and draft_n > 0),

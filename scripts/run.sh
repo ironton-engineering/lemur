@@ -19,29 +19,27 @@ echo "---- $(date -Is) launch ----"
 
 if [[ ! -d "$VENV" ]]; then
   "$SYS_PYTHON" -m venv "$VENV"
-  "$VENV/bin/pip" install -q -r "$ROOT/requirements.txt"
+  "$VENV/bin/pip" install -q -r "$ROOT/requirements.lock"
 fi
 
 server_up() {
-  # Lightweight check — do NOT hit /api/settings (Dream python probe was slow).
+  # Use a small health check during startup.
   curl -sf --max-time 1 "$URL/v1/health" >/dev/null 2>&1 \
     || curl -sf --max-time 1 "$URL/" >/dev/null 2>&1
 }
 
-# Always restart backend on launch so code/static changes apply
 if [[ -f "$PID_FILE" ]]; then
   old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "${old_pid:-}" ]] && kill -0 "$old_pid" 2>/dev/null; then
-    echo "stopping previous uvicorn ($old_pid)"
+    if server_up; then
+      echo "server already running ($old_pid)"
+      exec "$SYS_PYTHON" "$ROOT/scripts/window.py" "$URL"
+    fi
+    echo "stopping an unhealthy Lemur server ($old_pid)"
     kill "$old_pid" 2>/dev/null || true
-    sleep 0.5
   fi
   rm -f "$PID_FILE"
 fi
-
-# Also stop any stray uvicorn on our port from prior runs
-pkill -f "uvicorn server.main:app --host 127.0.0.1 --port $PORT" 2>/dev/null || true
-sleep 0.3
 
 echo "starting uvicorn on :$PORT"
 nohup "$VENV/bin/uvicorn" server.main:app \

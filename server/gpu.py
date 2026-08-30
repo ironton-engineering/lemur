@@ -10,6 +10,10 @@ class GPU:
     memory_total_mib: int
     memory_used_mib: int = 0
     memory_free_mib: int = 0
+    compute_capability: str = ""
+    driver_version: str = ""
+    supported: bool = True
+    unsupported_reason: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -18,15 +22,21 @@ class GPU:
             "memory_total_mib": self.memory_total_mib,
             "memory_used_mib": self.memory_used_mib,
             "memory_free_mib": self.memory_free_mib,
+            "compute_capability": self.compute_capability,
+            "driver_version": self.driver_version,
+            "supported": self.supported,
+            "unsupported_reason": self.unsupported_reason,
         }
 
 
-def list_gpus() -> list[GPU]:
+def list_gpus(*, include_unsupported: bool = False) -> list[GPU]:
+    from scripts.system_probe import gpu_supported
+
     try:
         result = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=index,name,memory.total,memory.used,memory.free",
+                "--query-gpu=index,name,memory.total,memory.used,memory.free,compute_cap,driver_version",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -41,21 +51,26 @@ def list_gpus() -> list[GPU]:
     gpus: list[GPU] = []
     for line in result.stdout.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 5:
+        if len(parts) < 7:
             continue
         try:
             total = int(float(parts[2]))
             used = int(float(parts[3]))
             free = int(float(parts[4]))
-            gpus.append(
-                GPU(
+            supported, reason = gpu_supported(parts[1], parts[5])
+            gpu = GPU(
                     index=int(parts[0]),
                     name=parts[1],
                     memory_total_mib=total,
                     memory_used_mib=used,
                     memory_free_mib=free,
+                    compute_capability=parts[5],
+                    driver_version=parts[6],
+                    supported=supported,
+                    unsupported_reason="" if supported else reason,
                 )
-            )
+            if include_unsupported or gpu.supported:
+                gpus.append(gpu)
         except ValueError:
             continue
     return gpus

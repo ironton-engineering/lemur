@@ -386,27 +386,14 @@ function renderVramEstimate(est, extraMsgs) {
   const ramBit = est.uses_ram ? ` · RAM ~${fmtGb(est.estimated_ram_gb)}` : "";
   $("#vram-est-summary").textContent = `need ${fmtGb(est.need_gb)} · ${poolBit}${ramBit}${mtpBit}`;
 
-  const parts = est.diffusion
-    ? est.dream
-      ? [
-          `weights ${fmtGb(est.weights_gb)}`,
-          `scratch ${fmtGb(est.scratch_gb)}`,
-          est.maxtok ? `max_new ${est.maxtok}` : null,
-        ].filter(Boolean)
-      : [
-          `weights ${fmtGb(est.weights_gb)}`,
-          `compute ${fmtGb(est.scratch_gb)}`,
-          est.maxtok ? `MAXTOK ${est.maxtok}` : "MAXTOK auto",
-        ]
-    : [
-        `weights ${fmtGb(est.weights_gb)}`,
-        `KV ${fmtGb(est.kv_gb)}`,
-        `compute ${fmtGb(est.scratch_gb)}`,
-      ];
+  const parts = [
+    `weights ${fmtGb(est.weights_gb)}`,
+    `KV ${fmtGb(est.kv_gb)}`,
+    `compute ${fmtGb(est.scratch_gb)}`,
+  ];
   if (est.mtp && est.mtp_gb > 0) parts.push(`MTP ${fmtGb(est.mtp_gb)}`);
   if (est.confidence === "low") parts.push("low-confidence arch");
   if (est.arch?.architecture) parts.push(String(est.arch.architecture));
-  if (est.dream) parts.push("dream");
   $("#vram-est-breakdown").textContent = parts.join(" · ");
 
   const gpusEl = $("#vram-est-gpus");
@@ -455,11 +442,6 @@ function renderVramEstimate(est, extraMsgs) {
   if (est.mtp_capable && est.mtp) {
     tips.push(`draft_n=${est.mtp_draft_n} (--spec-type draft-mtp)`);
   }
-  if (est.dream) {
-    tips.push("Dream: Transformers diffusion_generate — spill/MTP/ngl ignored; ctx→max_new_tokens");
-  } else if (est.diffusion) {
-    tips.push("Hub spill/MTP/ngl ignored — visual server auto-sizes MAXTOK");
-  }
   if (tips.length) {
     tipEl.textContent = tips.join(" · ");
     tipEl.classList.remove("hidden");
@@ -469,26 +451,12 @@ function renderVramEstimate(est, extraMsgs) {
   }
 }
 
-function modelLooksDream(m) {
-  if (!m) return false;
-  const hay = `${m.name || ""} ${m.path || ""} ${m.alias || ""}`.toLowerCase();
-  return (
-    hay.includes("dream-coder") ||
-    hay.includes("dream_coder") ||
-    hay.includes("dream-org") ||
-    hay.includes("models--dream-org--") ||
-    /(^|[\/_-])dream([\/_-]|$)/.test(hay)
-  );
-}
-
 function selectModel(path) {
   state.selectedModel = state.models.find((m) => m.path === path) || null;
   const el = $("#selected-model");
   if (state.selectedModel) {
     let tag = "";
-    if (modelLooksDream(state.selectedModel)) {
-      tag = "[dream] ";
-    } else if (state.selectedModel.format === "hf") {
+    if (state.selectedModel.format === "hf") {
       tag = "[hf→gguf] ";
     } else if (state.selectedModel.shards > 1) {
       tag = `[${state.selectedModel.shards} shards] `;
@@ -634,7 +602,7 @@ function renderServers() {
         <span class="server-card-name tip" data-tip="Model name for this llama-server instance">${escapeHtml(s.model_name)}</span>
         <span class="server-status ${s.status} tip" data-tip="Process state: starting (loading), running (ready), or error">${s.status}</span>
       </div>
-      <div class="server-meta tip" data-tip="Primary GPU, CUDA device list, spill mode, MTP, vision, diffusion/dream, listen port, and context size (-c)">GPU ${s.gpu}${s.devices && s.devices !== String(s.gpu) ? `→[${escapeHtml(s.devices)}]` : ""} · spill ${escapeHtml(s.spill || "none")}${s.mtp ? ` · mtp n=${s.mtp_draft_n || 2}` : ""}${s.vision ? " · vision" : ""}${s.dream ? " · dream" : s.diffusion ? " · diffusion" : ""} · :${s.port} · ctx ${s.ctx}</div>
+      <div class="server-meta tip" data-tip="Primary GPU, CUDA device list, spill mode, MTP, vision, listen port, and context size (-c)">GPU ${s.gpu}${s.devices && s.devices !== String(s.gpu) ? `→[${escapeHtml(s.devices)}]` : ""} · spill ${escapeHtml(s.spill || "none")}${s.mtp ? ` · mtp n=${s.mtp_draft_n || 2}` : ""}${s.vision ? " · vision" : ""} · :${s.port} · ctx ${s.ctx}</div>
       <div class="server-actions">
         ${canFavorite ? `<button type="button" class="btn btn-ghost btn-favorite-server tip ${saved ? "is-saved" : ""}" data-id="${s.id}" data-tip="Save this model and its current launch settings as a one-click favorite" ${saved ? "disabled" : ""}>${saved ? "★ saved" : "☆ favorite"}</button>` : ""}
         <button type="button" class="btn btn-ghost btn-chat tip" data-id="${s.id}" data-tip="Open the quick chat playground against this server">chat</button>
@@ -920,10 +888,6 @@ async function loadSettings() {
   setCtxPreset(state.settings.default_ctx);
   $("#ngl-input").value = state.settings.default_ngl;
   $("#settings-binary").value = state.settings.llama_server_path;
-  const diffBin = $("#settings-diffusion-bin");
-  if (diffBin) diffBin.value = state.settings.diffusion_visual_bin || "";
-  const dreamPy = $("#settings-dream-python");
-  if (dreamPy) dreamPy.value = state.settings.dream_python || "";
   $("#settings-scan-root").value = state.settings.scan_root;
   $("#settings-min-size").value = state.settings.min_model_size_mb;
   $("#settings-default-ctx").value = state.settings.default_ctx;
@@ -934,12 +898,6 @@ async function loadSettings() {
   applyFontSize(fontSize);
   const bits = [
     state.settings.binary_exists ? "llama-server ok" : "llama-server missing",
-    state.settings.diffusion_visual_exists
-      ? "diffusion-visual ok"
-      : "diffusion-visual missing (needed for DiffusionGemma)",
-    state.settings.dream_python_ok
-      ? `dream-python ok (${state.settings.dream_python_resolved || "auto"})`
-      : "dream-python missing torch/transformers (needed for Dream)",
   ];
   $("#settings-binary-status").textContent = bits.join(" · ");
 }
@@ -1257,13 +1215,7 @@ function renderAnalyzer(data) {
 
   let genTip =
     "Token generation speed — live while busy, else recent average. Matches llama-server predicted_per_second (accepted tokens / gen time; MTP counts accepted drafts).";
-  if (k.diffusion) {
-    genTip =
-      "Diffusion output tok/s (committed answer tokens / wall). Parallel canvas rate is internal and usually much higher.";
-    if (k.diffusion_parallel_tok_s != null) {
-      genTip += ` Parallel ≈ ${fmtNum(k.diffusion_parallel_tok_s, 0)} t/s.`;
-    }
-  } else if (k.mtp && k.draft_n) {
+  if (k.mtp && k.draft_n) {
     const acc =
       k.draft_n_accepted != null
         ? ` · draft accept ${fmtNum(k.draft_n_accepted)}/${fmtNum(k.draft_n)}`
@@ -1856,8 +1808,6 @@ async function saveSettings(e) {
       method: "PUT",
       body: JSON.stringify({
         llama_server_path: $("#settings-binary").value,
-        diffusion_visual_bin: $("#settings-diffusion-bin")?.value || "",
-        dream_python: $("#settings-dream-python")?.value || "",
         scan_root: $("#settings-scan-root").value,
         min_model_size_mb: parseInt($("#settings-min-size").value, 10),
         default_ctx: parseInt($("#settings-default-ctx").value, 10),

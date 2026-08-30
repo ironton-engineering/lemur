@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import time
 import uuid
@@ -14,8 +15,15 @@ def _detect_llama_server() -> str:
     if found:
         return found
     home = Path.home()
+    install_root = Path(
+        os.environ.get("LEMUR_INSTALL_ROOT", home / ".local/share/llm-hub")
+    ).expanduser()
+    installed = sorted(
+        install_root.glob("backends/llama.cpp-*/bin/llama-server"), reverse=True
+    )
+    if installed:
+        return str(installed[0])
     for rel in (
-        ".unsloth/llama.cpp/build/bin/llama-server",
         "llama.cpp/build/bin/llama-server",
         "llama.cpp/build-cuda/bin/llama-server",
         "llama.cpp/build-cuda128-safe/bin/llama-server",
@@ -28,20 +36,15 @@ def _detect_llama_server() -> str:
 
 
 DEFAULT_LLAMA_SERVER = _detect_llama_server()
-DEFAULT_DIFFUSION_VISUAL = str(
-    Path.home()
-    / ".unsloth/llama.cpp/build/bin/llama-diffusion-gemma-visual-server"
-)
-DEFAULT_VLLM_BIN = str(CONFIG_DIR / "vllm-venv" / "bin" / "vllm")
-DEFAULT_DREAM_PYTHON = str(CONFIG_DIR / "dream-venv" / "bin" / "python")
+_INSTALL_ROOT = Path(
+    os.environ.get("LEMUR_INSTALL_ROOT", Path.home() / ".local/share/llm-hub")
+).expanduser()
+_VLLM_BINS = sorted(_INSTALL_ROOT.glob("backends/vllm-*/bin/vllm"), reverse=True)
+DEFAULT_VLLM_BIN = str(_VLLM_BINS[0]) if _VLLM_BINS else ""
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "llama_server_path": DEFAULT_LLAMA_SERVER,
-    "diffusion_visual_bin": DEFAULT_DIFFUSION_VISUAL,
     "vllm_bin": DEFAULT_VLLM_BIN,
-    # Python with torch + transformers≈4.46 for Dream HF models.
-    # Empty → auto-detect (dream-venv, Hub venv, then ~/miniconda3).
-    "dream_python": DEFAULT_DREAM_PYTHON if Path(DEFAULT_DREAM_PYTHON).is_file() else "",
     "scan_root": str(Path.home()),
     "min_model_size_mb": 50,
     "default_ctx": 8192,
@@ -51,8 +54,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # convert_hf_to_gguf.py can emit Q8 directly; K-quants need a separate
     # llama-quantize pass that the hub does not implement.
     "hf_outtype": "q8_0",
-    # Python with torch for convert_hf_to_gguf.py. Empty → auto-detect
-    # (miniconda, dream-venv, then sys.executable).
+    # Python with torch for convert_hf_to_gguf.py. Empty uses the current Python.
     "hf_convert_python": "",
     "ui_font_size": 15,
     "scan_exclude_dirs": [

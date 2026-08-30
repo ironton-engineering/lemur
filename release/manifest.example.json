@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "archive": "lemur-linux-x86_64.tar.gz",
+  "archive_url": "https://github.com/ironton-engineering/lemur/releases/latest/download/lemur-linux-x86_64.tar.gz",
+  "size": 0,
+  "sha256": "SET_BY_RELEASE_WORKFLOW",
+  "llama_cpp": {
+    "version": "b10516",
+    "commit": "b95502ba9aa0eb73a2f4fc8878d7fbe6a847a0b9",
+    "source_url": "https://github.com/ggml-org/llama.cpp.git"
+  },
+  "vllm": {
+    "version": "0.26.0",
+    "optional": true,
+    "cuda": "12.9",
+    "source_url": "https://github.com/vllm-project/vllm/tree/v0.26.0"
+  }
+}

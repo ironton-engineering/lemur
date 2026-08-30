@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,24 @@ from server.aliases import model_alias
 from server.openai_normalize import normalize_openai_body
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
-app = FastAPI(title="Lemur", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        _sync_codex()
+    except Exception:
+        pass
+    yield
+    processes.stop_all_servers()
+
+
+app = FastAPI(
+    title="Lemur",
+    version=VERSION_FILE.read_text().strip() if VERSION_FILE.is_file() else "dev",
+    lifespan=lifespan,
+)
 
 NO_CACHE_SUFFIXES = {".html", ".css", ".js"}
 
@@ -49,9 +66,7 @@ class StartServerRequest(BaseModel):
 
 class SettingsUpdate(BaseModel):
     llama_server_path: str | None = None
-    diffusion_visual_bin: str | None = None
     vllm_bin: str | None = None
-    dream_python: str | None = None
     scan_root: str | None = None
     min_model_size_mb: int | None = None
     default_ctx: int | None = None
@@ -307,14 +322,6 @@ async def _proxy_openai(path: str, body: dict[str, Any]):
             io_trace.end(server.id, trace_id, timings=data.get("usage"))
         _note_timings_from_payload(server.id, data)
         return JSONResponse(data)
-
-
-@app.on_event("startup")
-def on_startup():
-    try:
-        _sync_codex()
-    except Exception:
-        pass
 
 
 @app.get("/api/models")
@@ -582,56 +589,27 @@ def api_vram_estimate(req: VramEstimateRequest):
         path, arch
     )
     draft_n = max(1, min(6, int(req.mtp_draft_n or 2)))
-    is_dream = gguf_meta.model_looks_dream(path, arch)
-    is_diffusion = (not is_dream) and gguf_meta.model_looks_diffusion(path, arch)
-
-    if is_dream:
-        mtp = False
-        mtp_capable = False
-        draft_n = 0
-        max_new = max(64, min(int(req.ctx or 768), 2048))
-        est = gguf_meta.estimate_dream_vram_mib(
-            weights_bytes=size,
-            max_new_tokens=max_new,
-        )
-        spill = "none"
-    elif is_diffusion:
-        # Diffusion ignores Hub spill / MTP; visual server owns placement.
-        mtp = False
-        mtp_capable = False
-        draft_n = 0
-        est = gguf_meta.estimate_diffusion_vram_mib(
-            weights_bytes=size,
-            maxtok=req.ctx,
-            n_head=int((arch or {}).get("n_head") or 16),
-        )
-        spill = "none"
-    else:
-        # The launch path uses Q8 KV for large Qwen 3.5/3.6 models at long
-        # context. Estimate the configuration that will actually run.
-        qwen35_q8_kv = gguf_meta.uses_qwen35_q8_kv(arch, req.ctx, size)
-        est = gguf_meta.estimate_vram_mib(
-            weights_bytes=size,
-            ctx=req.ctx,
-            arch=arch,
-            mtp=mtp,
-            mtp_draft_n=draft_n,
-            kv_bytes_per_elem=1 if qwen35_q8_kv else 2,
-        )
+    # The launch path uses Q8 KV for large Qwen 3.5/3.6 models at long
+    # context. Estimate the configuration that will actually run.
+    qwen35_q8_kv = gguf_meta.uses_qwen35_q8_kv(arch, req.ctx, size)
+    est = gguf_meta.estimate_vram_mib(
+        weights_bytes=size,
+        ctx=req.ctx,
+        arch=arch,
+        mtp=mtp,
+        mtp_draft_n=draft_n,
+        kv_bytes_per_elem=1 if qwen35_q8_kv else 2,
+    )
 
     gpus = gpu.list_gpus()
     primary = next((g for g in gpus if g.index == req.gpu), None)
     free_primary = float(primary.memory_free_mib if primary else 0)
     total_primary = float(primary.memory_total_mib if primary else 0)
-    if not is_diffusion and not is_dream:
-        spill = (req.spill or "none").lower()
-    else:
-        spill = "none"
+    spill = (req.spill or "none").lower()
 
     # Devices llama-server will use (mirrors processes._device_list).
-    # Diffusion-family is always single-GPU.
     devices = [req.gpu]
-    if not is_diffusion and not is_dream and spill in ("gpu", "both"):
+    if spill in ("gpu", "both"):
         others = sorted(g.index for g in gpus if g.index != req.gpu)
         devices = [req.gpu] + others
 
@@ -647,11 +625,7 @@ def api_vram_estimate(req: VramEstimateRequest):
     pool_free = sum(frees)
     vram_safety_mib = 1024.0
     pool_usable = sum(max(0.0, free - vram_safety_mib) for free in frees)
-    if is_diffusion:
-        # Visual server may put compute (or weight overflow) on system RAM on its
-        # own — not via Hub spill=ram. Credit RAM only for the shortfall.
-        ram_credit_mib = gpu.available_ram_mib()
-    elif spill in ("ram", "both"):
+    if spill in ("ram", "both"):
         ram_credit_mib = gpu.available_ram_mib()
     else:
         ram_credit_mib = 0.0
@@ -690,55 +664,16 @@ def api_vram_estimate(req: VramEstimateRequest):
         max(0.0, vram_safety_mib - float(g["headroom_gb"]) * 1024.0)
         for g in per_gpu
     )
-    if is_diffusion or is_dream:
-        # Diffusion-family: Hub spill dropdown does not apply.
-        estimated_ram_mib = (
-            max(0.0, need - pool_usable, gpu_shortfall_mib) if not fits_vram else 0.0
-        )
-        uses_ram = estimated_ram_mib > 0 and fits
-    else:
-        estimated_ram_mib = (
-            max(0.0, need - pool_usable, gpu_shortfall_mib)
-            if spill in ("ram", "both") and not fits_vram
-            else 0.0
-        )
-        uses_ram = estimated_ram_mib > 0 and fits
+    estimated_ram_mib = (
+        max(0.0, need - pool_usable, gpu_shortfall_mib)
+        if spill in ("ram", "both") and not fits_vram
+        else 0.0
+    )
+    uses_ram = estimated_ram_mib > 0 and fits
 
     # Suggested max ctx if over budget (binary-search-ish via proportion)
     tip = None
-    if is_dream:
-        max_new = int(est.get("max_new_tokens") or est.get("maxtok") or 768)
-        if not fits_vram:
-            tip = (
-                f"Dream: needs ~{need / 1024.0:.1f} GB VRAM (BF16 Transformers). "
-                "Use a ≥16 GB GPU; Hub spill/MTP/ngl do not apply. "
-                f"Ctx maps to max_new_tokens={max_new}."
-            )
-        else:
-            tip = (
-                f"Dream: Transformers diffusion_generate on one GPU; "
-                f"ctx→max_new_tokens={max_new}. Spill/MTP/ngl ignored."
-            )
-    elif is_diffusion:
-        maxtok = int(est.get("maxtok") or 0)
-        if uses_ram:
-            tip = (
-                f"DiffusionGemma: Hub spill modes are ignored. Visual server will "
-                f"auto-use ~{estimated_ram_mib / 1024.0:.1f} GB system RAM "
-                f"(weights {float(est['weights_mib']) / 1024.0:.1f} GB + compute). "
-                "Prefer a roomier GPU or a smaller quant."
-            )
-        elif maxtok:
-            tip = (
-                f"DiffusionGemma: single GPU, MAXTOK={maxtok} (from ctx). "
-                "Hub spill/MTP/ngl do not apply — compute buffer scales ~N²."
-            )
-        else:
-            tip = (
-                "DiffusionGemma: single GPU; MAXTOK auto-sizes to free VRAM after "
-                "weights load (Hub spill/MTP/ngl ignored). Ctx>8192 → auto."
-            )
-    elif len(devices) > 1 and need + 1024.0 <= free_primary:
+    if len(devices) > 1 and need + 1024.0 <= free_primary:
         tip = (
             f"fits GPU {req.gpu} alone; adding another GPU is a capacity option "
             "and can reduce generation speed on mismatched cards"
@@ -747,7 +682,7 @@ def api_vram_estimate(req: VramEstimateRequest):
         if spill == "ram" and req.ctx >= 262144 and len(gpus) >= 2:
             tip = (
                 f"about {estimated_ram_mib / 1024.0:.1f} GB may spill to system RAM "
-                "(~22 tok/s on this box); at 256K use spill=both for ~2× gen speed"
+                "for large contexts; another GPU can reduce RAM use"
             )
         else:
             tip = (
@@ -794,9 +729,6 @@ def api_vram_estimate(req: VramEstimateRequest):
         "gpu": req.gpu,
         "devices": devices,
         "arch": arch,
-        "diffusion": bool(is_diffusion or is_dream),
-        "dream": is_dream,
-        "maxtok": int(est.get("maxtok") or 0) if (is_diffusion or is_dream) else None,
         "mtp": mtp,
         "mtp_draft_n": draft_n if mtp else 0,
         "mtp_capable": mtp_capable,
@@ -880,19 +812,11 @@ def api_analyzer_server(server_id: str):
 
 @app.get("/api/settings")
 def api_get_settings():
-    from server.processes import resolve_dream_python
-
     settings = config.get_settings()
     binary = settings["llama_server_path"]
-    visual = settings.get("diffusion_visual_bin") or ""
-    # resolve_dream_python is cached / trusts configured path — keeps launch fast.
-    dream_py = resolve_dream_python(settings.get("dream_python"))
     return {
         **settings,
         "binary_exists": Path(binary).is_file(),
-        "diffusion_visual_exists": Path(visual).is_file() if visual else False,
-        "dream_python_ok": bool(dream_py),
-        "dream_python_resolved": dream_py or "",
         "codex_base_url": codex.HUB_BASE_URL,
         "codex_profile": codex.PROFILE_NAME,
     }
@@ -900,19 +824,12 @@ def api_get_settings():
 
 @app.put("/api/settings")
 def api_update_settings(req: SettingsUpdate):
-    from server.processes import resolve_dream_python
-
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     settings = config.update_settings(updates)
     binary = settings["llama_server_path"]
-    visual = settings.get("diffusion_visual_bin") or ""
-    dream_py = resolve_dream_python(settings.get("dream_python"))
     return {
         **settings,
         "binary_exists": Path(binary).is_file(),
-        "diffusion_visual_exists": Path(visual).is_file() if visual else False,
-        "dream_python_ok": bool(dream_py),
-        "dream_python_resolved": dream_py or "",
         "codex_base_url": codex.HUB_BASE_URL,
         "codex_profile": codex.PROFILE_NAME,
     }

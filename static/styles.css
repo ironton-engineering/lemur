@@ -11,7 +11,7 @@
   --accent-soft: rgba(122, 154, 134, 0.1);
   --danger: #e06a74;
   --warning: #c9b06a;
-  --font: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font: "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
   --font-size: 15px;
   --radius: 3px;
 }

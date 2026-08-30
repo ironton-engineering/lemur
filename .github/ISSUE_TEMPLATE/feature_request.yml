@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a focused Lemur improvement
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem that this feature will solve.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Requested result
+    validations:
+      required: true

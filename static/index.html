@@ -6,9 +6,6 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <title>Lemur</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=20260822a">
 </head>
 <body>
@@ -293,14 +290,6 @@
       <div class="field">
         <label for="settings-binary" class="tip" data-tip="Path to the llama-server executable used to launch models">llama-server</label>
         <input type="text" id="settings-binary" required>
-      </div>
-      <div class="field">
-        <label for="settings-diffusion-bin" class="tip" data-tip="llama-diffusion-gemma-visual-server from Unsloth / llama.cpp PR #24423. Used automatically for diffusion-gemma GGUFs.">diffusion-visual</label>
-        <input type="text" id="settings-diffusion-bin">
-      </div>
-      <div class="field">
-        <label for="settings-dream-python" class="tip" data-tip="Python with torch+transformers for Dream HF models. Leave empty to auto-detect (Hub venv, then ~/miniconda3).">dream-python</label>
-        <input type="text" id="settings-dream-python" placeholder="auto">
       </div>
       <div class="field">
         <label for="settings-scan-root" class="tip" data-tip="Root directory recursively scanned for .gguf files and HF model folders">scan_root</label>

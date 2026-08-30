@@ -20,7 +20,6 @@ TEXT_ARCH_HINTS = (
 )
 
 SKIP_ARCH_HINTS = (
-    "Diffusion",
     "UNet",
     "VAE",
     "CLIP",
@@ -300,10 +299,7 @@ def _is_text_hf_dir(dirpath: Path) -> bool:
         if not any(h in arch_str for h in TEXT_ARCH_HINTS):
             # Allow common text model_type without CausalLM suffix
             mt = (cfg.get("model_type") or "").lower()
-            # DreamModel is a diffusion LM (trust_remote_code), not CausalLM.
-            if "DreamModel" in arch_str or mt == "dream":
-                pass
-            elif mt not in (
+            if mt not in (
                 "llama",
                 "qwen2",
                 "qwen3",
@@ -320,7 +316,6 @@ def _is_text_hf_dir(dirpath: Path) -> bool:
                 "deepseek",
                 "chatglm",
                 "internlm",
-                "dream",
             ):
                 return False
             # model_type alone is weak — require no multimodal markers (already checked)

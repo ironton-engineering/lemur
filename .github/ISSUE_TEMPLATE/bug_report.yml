@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a repeatable Lemur problem
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include prompts, tokens, model files, or personal paths.
+  - type: input
+    id: version
+    attributes:
+      label: Lemur version
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Ubuntu, GPU, and driver
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
