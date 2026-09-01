@@ -4,6 +4,11 @@
   "archive_url": "https://github.com/ironton-engineering/lemur/releases/latest/download/lemur-linux-x86_64.tar.gz",
   "size": 0,
   "sha256": "SET_BY_RELEASE_WORKFLOW",
+  "cuda_toolkits": {
+    "ubuntu_22_04": "12.8",
+    "ubuntu_24_04": "12.8",
+    "ubuntu_26_04": "13.3"
+  },
   "llama_cpp": {
     "version": "b10516",
     "commit": "b95502ba9aa0eb73a2f4fc8878d7fbe6a847a0b9",

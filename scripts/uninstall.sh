@@ -42,6 +42,7 @@ targets=(
   "$BIN_DIR/lemur"
   "$DATA_DIR/applications/lemur.desktop"
   "$DATA_DIR/icons/hicolor/scalable/apps/lemur.svg"
+  "$DATA_DIR/icons/hicolor/scalable/apps/lemur.png"
 )
 if [[ "$REMOVE_USER_DATA" -eq 1 ]]; then
   targets+=("$CONFIG_DIR")

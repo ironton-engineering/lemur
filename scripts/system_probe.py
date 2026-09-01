@@ -13,8 +13,13 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-SUPPORTED_UBUNTU = {"22.04", "24.04"}
-MIN_DRIVER = (570, 26)
+SUPPORTED_UBUNTU = {"22.04", "24.04", "26.04"}
+MIN_DRIVER_BY_UBUNTU = {
+    "22.04": (570, 26),
+    "24.04": (570, 26),
+    "26.04": (580, 0),
+}
+DEFAULT_MIN_DRIVER = MIN_DRIVER_BY_UBUNTU["22.04"]
 MIN_COMPUTE_CAPABILITY = (8, 6)
 RTX_SERIES_RE = re.compile(r"\b(?:GeForce\s+)?RTX\s+(30|40|50)\d{2}\b", re.I)
 
@@ -130,18 +135,20 @@ def inspect_system(
     install_root: str | Path | None = None,
 ) -> dict:
     os_data = read_os_release(os_release_path)
+    os_version = os_data.get("VERSION_ID", "unknown")
+    minimum_driver = MIN_DRIVER_BY_UBUNTU.get(os_version, DEFAULT_MIN_DRIVER)
     machine = platform.machine()
     gpus, gpu_error = query_gpus()
     supported = [gpu for gpu in gpus if gpu.supported]
     ignored = [gpu for gpu in gpus if not gpu.supported]
     driver_ok = bool(supported) and all(
-        version_tuple(gpu.driver_version) >= MIN_DRIVER for gpu in supported
+        version_tuple(gpu.driver_version) >= minimum_driver for gpu in supported
     )
     root = Path(install_root or os.environ.get("LEMUR_INSTALL_ROOT", "~/.local/share/llm-hub")).expanduser()
     disk_path = root.parent if root.parent.exists() else Path.home()
     errors: list[str] = []
-    if os_data.get("ID") != "ubuntu" or os_data.get("VERSION_ID") not in SUPPORTED_UBUNTU:
-        errors.append("Lemur supports Ubuntu 22.04 and 24.04 only")
+    if os_data.get("ID") != "ubuntu" or os_version not in SUPPORTED_UBUNTU:
+        errors.append("Lemur supports Ubuntu 22.04, 24.04, and 26.04 only")
     if machine != "x86_64":
         errors.append("Lemur supports x86-64 only")
     if gpu_error:
@@ -149,16 +156,17 @@ def inspect_system(
     elif not supported:
         errors.append("No supported NVIDIA RTX 30-, 40-, or 50-series GPU was found")
     if supported and not driver_ok:
-        errors.append("NVIDIA driver 570.26 or newer is required")
+        required = ".".join(str(item) for item in minimum_driver)
+        errors.append(f"NVIDIA driver {required} or newer is required")
     free_gib = disk_free_gib(disk_path)
     if free_gib < 15:
         errors.append("At least 15 GiB of free disk space is required")
     return {
         "ok": not errors,
         "os_id": os_data.get("ID", "unknown"),
-        "os_version": os_data.get("VERSION_ID", "unknown"),
+        "os_version": os_version,
         "machine": machine,
-        "minimum_driver": ".".join(str(item) for item in MIN_DRIVER),
+        "minimum_driver": ".".join(str(item) for item in minimum_driver),
         "driver_ok": driver_ok,
         "free_disk_gib": round(free_gib, 1),
         "supported_gpus": [asdict(gpu) for gpu in supported],

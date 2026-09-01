@@ -6,10 +6,11 @@ Lemur does not include model files and does not send telemetry.
 
 ## Supported Systems
 
-- Ubuntu 22.04 or Ubuntu 24.04
+- Ubuntu 22.04, Ubuntu 24.04, or Ubuntu 26.04
 - x86-64
 - NVIDIA GeForce RTX 30-, 40-, or 50-series GPU
-- NVIDIA driver 570.26 or newer
+- NVIDIA driver 570.26 or newer on Ubuntu 22.04 and 24.04
+- NVIDIA driver 580 or newer on Ubuntu 26.04
 - At least 15 GiB of free disk space
 
 Lemur does not support CPU-only inference. The NVIDIA driver must work before installation. The installer does not install or change the driver.
@@ -20,7 +21,7 @@ Lemur does not support CPU-only inference. The NVIDIA driver must work before in
 curl -fsSL https://github.com/ironton-engineering/lemur/releases/latest/download/install.sh | bash
 ```
 
-The installer shows each Ubuntu package command before it requests `sudo`. It can install CUDA Toolkit 12.8, but it does not install the NVIDIA driver. It builds a pinned llama.cpp release for the GPUs in the machine. The build can take several minutes.
+The installer shows each Ubuntu package command before it requests `sudo`. It can install CUDA Toolkit 12.8 on Ubuntu 22.04 and 24.04 or CUDA Toolkit 13.3 on Ubuntu 26.04. It does not install the NVIDIA driver. It builds a pinned llama.cpp release for the GPUs in the machine. The build can take several minutes.
 
 To inspect the installer before execution:
 

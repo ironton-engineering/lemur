@@ -42,7 +42,7 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 echo "starting uvicorn on :$PORT"
-nohup "$VENV/bin/uvicorn" server.main:app \
+nohup "$VENV/bin/python" -m uvicorn server.main:app \
   --host 127.0.0.1 \
   --port "$PORT" \
   --no-access-log \

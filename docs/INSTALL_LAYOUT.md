@@ -27,7 +27,7 @@ Application releases and backend directories are immutable after a successful in
 ```text
 ~/.local/bin/lemur
 ~/.local/share/applications/lemur.desktop
-~/.local/share/icons/hicolor/scalable/apps/lemur.svg
+~/.local/share/icons/hicolor/scalable/apps/lemur.png
 ```
 
 ## Mutable User Data

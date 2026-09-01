@@ -10,8 +10,9 @@ ICON_DIR="$DATA_DIR/icons/hicolor/scalable/apps"
 mkdir -p "$APPS_DIR" "$ICON_DIR"
 
 sed "s|@BIN@|$BIN_DIR|g" "$ROOT/lemur.desktop.in" > "$APPS_DIR/lemur.desktop"
-cp "$ROOT/assets/icon.svg" "$ICON_DIR/lemur.svg"
-chmod 0644 "$APPS_DIR/lemur.desktop" "$ICON_DIR/lemur.svg"
+rm -f -- "$ICON_DIR/lemur.svg"
+cp "$ROOT/assets/lemur.png" "$ICON_DIR/lemur.png"
+chmod 0644 "$APPS_DIR/lemur.desktop" "$ICON_DIR/lemur.png"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APPS_DIR"

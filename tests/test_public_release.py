@@ -62,6 +62,38 @@ class SystemProbeTests(unittest.TestCase):
                 report = system_probe.inspect_system(os_release_path=os_release)
         self.assertTrue(report["ok"])
 
+    def test_inspect_system_accepts_ubuntu_26_with_driver_580_or_newer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            os_release = Path(temp) / "os-release"
+            os_release.write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            gpu = system_probe.GPUReport(
+                0, "NVIDIA GeForce RTX 5090", 32607, "12.0", "595.84", True, "supported"
+            )
+            with (
+                patch.object(system_probe, "query_gpus", return_value=([gpu], None)),
+                patch.object(system_probe, "disk_free_gib", return_value=100.0),
+                patch.object(system_probe.platform, "machine", return_value="x86_64"),
+            ):
+                report = system_probe.inspect_system(os_release_path=os_release)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["minimum_driver"], "580.0")
+
+    def test_inspect_system_rejects_old_driver_on_ubuntu_26(self):
+        with tempfile.TemporaryDirectory() as temp:
+            os_release = Path(temp) / "os-release"
+            os_release.write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            gpu = system_probe.GPUReport(
+                0, "NVIDIA GeForce RTX 5090", 32607, "12.0", "579.99", True, "supported"
+            )
+            with (
+                patch.object(system_probe, "query_gpus", return_value=([gpu], None)),
+                patch.object(system_probe, "disk_free_gib", return_value=100.0),
+                patch.object(system_probe.platform, "machine", return_value="x86_64"),
+            ):
+                report = system_probe.inspect_system(os_release_path=os_release)
+        self.assertFalse(report["ok"])
+        self.assertIn("NVIDIA driver 580.0 or newer is required", report["errors"])
+
     def test_inspect_system_rejects_low_disk_and_old_driver(self):
         with tempfile.TemporaryDirectory() as temp:
             os_release = Path(temp) / "os-release"
@@ -150,6 +182,30 @@ class InstallerLayoutTests(unittest.TestCase):
         )
         self.assertIn("doctor", help_result.stdout)
         self.assertEqual(version_result.stdout.strip(), "Lemur 0.1.0")
+
+    def test_release_launcher_uses_relocatable_virtual_environment_command(self):
+        launcher = (ROOT / "scripts/run.sh").read_text()
+        self.assertIn('"$VENV/bin/python" -m uvicorn', launcher)
+        self.assertNotIn('"$VENV/bin/uvicorn" server.main:app', launcher)
+
+    def test_release_window_has_no_development_browser_controls(self):
+        window = (ROOT / "scripts/window.py").read_text()
+        self.assertNotIn("set_enable_developer_extras(True)", window)
+        self.assertNotIn("KEY_F5", window)
+
+    def test_vllm_installer_uses_a_checked_relocatable_environment(self):
+        installer = (ROOT / "scripts/install-vllm.sh").read_text()
+        versions = (ROOT / "release/versions.env").read_text()
+        self.assertIn("--relocatable", installer)
+        self.assertIn("UV_X86_64_LINUX_SHA256", installer)
+        self.assertIn("--index-strategy unsafe-best-match", installer)
+        self.assertIn("VLLM_PYTHON_VERSION=3.10", versions)
+        self.assertIn('"$backend/bin/vllm" --version', installer)
+        self.assertIn('f"vllm @ {wheel_uri} \\\\"', installer)
+        self.assertIn('settings["vllm_bin"] = sys.argv[2]', installer)
+        self.assertIn("at least 20 GiB free", installer)
+        self.assertIn("vllm-*.dist-info/licenses/LICENSE", installer)
+        self.assertNotIn('cp "$ROOT/LICENSE" "$stage/licenses/Apache-2.0-LICENSE"', installer)
 
     def test_rollback_swaps_current_and_previous(self):
         with tempfile.TemporaryDirectory() as temp:

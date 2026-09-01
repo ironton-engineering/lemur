@@ -74,7 +74,25 @@ fi
 
 # shellcheck disable=SC1091
 os_version="$(. /etc/os-release && printf '%s' "$VERSION_ID")"
-base_packages=(python3 python3-venv curl git cmake ninja-build build-essential pkg-config libcurl4-openssl-dev)
+case "$os_version" in
+  22.04)
+    cuda_toolkit_version="$CUDA_TOOLKIT_VERSION_2204"
+    cuda_default_home="/usr/local/cuda-12.8"
+    cuda_keyring_sha="$CUDA_KEYRING_SHA256_UBUNTU2204"
+    ;;
+  24.04)
+    cuda_toolkit_version="$CUDA_TOOLKIT_VERSION_2404"
+    cuda_default_home="/usr/local/cuda-12.8"
+    cuda_keyring_sha="$CUDA_KEYRING_SHA256_UBUNTU2404"
+    ;;
+  26.04)
+    cuda_toolkit_version="$CUDA_TOOLKIT_VERSION_2604"
+    cuda_default_home="/usr/local/cuda-13.3"
+    cuda_keyring_sha="$CUDA_KEYRING_SHA256_UBUNTU2604"
+    ;;
+  *) die "Unsupported Ubuntu version: $os_version" ;;
+esac
+base_packages=(python3 python3-venv curl git cmake build-essential pkg-config libcurl4-openssl-dev)
 if [[ "$WITH_DESKTOP" -eq 1 ]]; then
   base_packages+=(gir1.2-gtk-3.0)
   if [[ "$os_version" == "22.04" ]]; then
@@ -101,33 +119,29 @@ if ((${#missing_packages[@]})); then
   sudo apt-get install -y "${missing_packages[@]}"
 fi
 
-cuda_home="${CUDA_HOME:-/usr/local/cuda-12.8}"
+cuda_home="${CUDA_HOME:-$cuda_default_home}"
 if [[ "$TEST_MODE" != "1" && ! -x "$cuda_home/bin/nvcc" ]]; then
   distro="ubuntu${os_version//./}"
   keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/x86_64/cuda-keyring_${CUDA_KEYRING_VERSION}_all.deb"
-  if [[ "$os_version" == "22.04" ]]; then
-    keyring_sha="$CUDA_KEYRING_SHA256_UBUNTU2204"
-  else
-    keyring_sha="$CUDA_KEYRING_SHA256_UBUNTU2404"
-  fi
   say "The CUDA compiler is missing."
   say "The installer must add NVIDIA's signed CUDA package source and run:"
-  say "  sudo apt-get update && sudo apt-get install -y cuda-toolkit-$CUDA_TOOLKIT_VERSION"
+  say "  sudo apt-get update && sudo apt-get install -y cuda-toolkit-$cuda_toolkit_version"
   say "This package does not install or change the NVIDIA driver."
-  approve "Install CUDA Toolkit 12.8?"
+  approve "Install CUDA Toolkit ${cuda_toolkit_version//-/.}?"
   tmp_keyring="$(mktemp)"
   trap 'rm -f -- "$tmp_keyring"' EXIT
   curl --fail --location --proto '=https' --tlsv1.2 "$keyring_url" --output "$tmp_keyring"
-  printf '%s  %s\n' "$keyring_sha" "$tmp_keyring" | sha256sum --check --status || \
+  printf '%s  %s\n' "$cuda_keyring_sha" "$tmp_keyring" | sha256sum --check --status || \
     die "The NVIDIA CUDA keyring checksum does not match"
   sudo dpkg -i "$tmp_keyring"
   sudo apt-get update
-  sudo apt-get install -y "cuda-toolkit-$CUDA_TOOLKIT_VERSION"
+  sudo apt-get install -y "cuda-toolkit-$cuda_toolkit_version"
   rm -f -- "$tmp_keyring"
   trap - EXIT
 fi
 if [[ "$TEST_MODE" != "1" ]]; then
-  [[ -x "$cuda_home/bin/nvcc" ]] || die "CUDA Toolkit 12.8 did not provide nvcc"
+  [[ -x "$cuda_home/bin/nvcc" ]] || \
+    die "CUDA Toolkit ${cuda_toolkit_version//-/.} did not provide nvcc"
 fi
 
 mkdir -p "$INSTALL_ROOT/releases" "$INSTALL_ROOT/backends" "$BIN_DIR" "$CONFIG_DIR"
@@ -151,7 +165,14 @@ if [[ ! -d "$release_dir" ]]; then
 fi
 
 llama_root="$INSTALL_ROOT/backends/llama.cpp-$LLAMA_CPP_VERSION"
-if [[ "$TEST_MODE" != "1" && ! -x "$llama_root/bin/llama-server" ]]; then
+llama_needs_install=0
+if [[ "$TEST_MODE" != "1" ]]; then
+  if [[ ! -x "$llama_root/bin/llama-server" ]] || \
+    ! "$llama_root/bin/llama-server" --version >/dev/null 2>&1; then
+    llama_needs_install=1
+  fi
+fi
+if [[ "$llama_needs_install" -eq 1 ]]; then
   llama_stage="$INSTALL_ROOT/backends/.stage-llama.cpp-$LLAMA_CPP_VERSION-$$"
   rm -rf -- "$llama_stage"
   git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git "$llama_stage/source"
@@ -160,16 +181,36 @@ if [[ "$TEST_MODE" != "1" && ! -x "$llama_root/bin/llama-server" ]]; then
   [[ "$actual_commit" == "$LLAMA_CPP_COMMIT" ]] || die "The llama.cpp commit does not match"
   caps="$(python3 "$SOURCE_ROOT/scripts/system_probe.py" --install-root "$INSTALL_ROOT" --cuda-architectures)"
   [[ -n "$caps" ]] || die "No supported CUDA architecture was found"
-  CUDACXX="$cuda_home/bin/nvcc" cmake -S "$llama_stage/source" -B "$llama_stage/build" -G Ninja \
+  cmake_generator=()
+  if command -v ninja >/dev/null 2>&1; then
+    cmake_generator=(-G Ninja)
+  fi
+  # CMake must receive the literal loader token.
+  # shellcheck disable=SC2016
+  CUDACXX="$cuda_home/bin/nvcc" cmake -S "$llama_stage/source" -B "$llama_stage/build" \
+    "${cmake_generator[@]}" \
     -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$caps" \
-    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=ON \
+    -DGGML_CCACHE=OFF -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
+    '-DCMAKE_INSTALL_RPATH=$ORIGIN' \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release
   cmake --build "$llama_stage/build" --target llama-server --parallel
   mkdir -p "$llama_stage/bin" "$llama_stage/licenses"
   cp -a "$llama_stage/build/bin/." "$llama_stage/bin/"
   cp "$llama_stage/source/LICENSE" "$llama_stage/licenses/llama.cpp-LICENSE"
   printf '%s\n' "$LLAMA_CPP_COMMIT" > "$llama_stage/COMMIT"
+  "$llama_stage/bin/llama-server" --version
+  rm -rf -- "$llama_stage/source" "$llama_stage/build"
+  old_llama=""
+  if [[ -e "$llama_root" ]]; then
+    old_llama="$INSTALL_ROOT/backends/.old-llama.cpp-$LLAMA_CPP_VERSION-$$"
+    mv "$llama_root" "$old_llama"
+  fi
   mv "$llama_stage" "$llama_root"
+  if [[ -n "$old_llama" ]]; then
+    rm -rf -- "$old_llama"
+  fi
 fi
 if [[ "$TEST_MODE" != "1" ]]; then
   "$llama_root/bin/llama-server" --version
