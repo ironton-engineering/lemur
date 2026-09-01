@@ -44,21 +44,16 @@ jobs:
           print(f"::error title=release check failure::{escaped}")
           PY
       - name: Build release archive
-        run: ./release/build-release.sh 2>&1 | tee release-build.log
-      - name: Report release-build failure
-        if: failure()
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          text = Path("release-build.log").read_text()[-5000:]
-          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=release build failure::{escaped}")
-          PY
+        run: ./release/build-release.sh
       - name: Check tag and application version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
       - name: Verify release assets
-        run: ls -la dist/
+        run: |
+          test -s dist/install.sh
+          test -s dist/lemur-linux-x86_64.tar.gz
+          test -s dist/lemur-linux-x86_64.tar.gz.sha256
+          test -s dist/manifest.json
+          test -s dist/LICENSE
       - uses: softprops/action-gh-release@v3
         with:
           prerelease: true

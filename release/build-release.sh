@@ -21,6 +21,10 @@ trap 'rm -rf -- "$tmp_dir"' EXIT
 stage="$tmp_dir/lemur-$VERSION"
 mkdir -p "$stage"
 
+git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null
+git -C "$ROOT" config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
+
+file_count=0
 (
   cd "$ROOT"
   git ls-files --cached --others --exclude-standard -z |
@@ -29,10 +33,18 @@ mkdir -p "$stage"
         .planning/*|dist/*|.cursor/*|*.pyc|*/__pycache__/*) continue ;;
       esac
       [[ -e "$file" || -L "$file" ]] || continue
+      file_count=$((file_count + 1))
       printf '%s\0' "$file"
     done |
     tar --null --files-from=- -cf -
 ) | tar -xf - -C "$stage"
+
+shopt -s nullglob
+staged=( "$stage"/* )
+(( ${#staged[@]} > 0 )) || {
+  printf 'ERROR: The release archive stage is empty.\n' >&2
+  exit 1
+}
 
 archive="$DIST/$NAME.tar.gz"
 tar -czf "$archive" -C "$tmp_dir" "lemur-$VERSION"
