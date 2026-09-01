@@ -407,6 +407,7 @@ class InstallerLayoutTests(unittest.TestCase):
                 **os.environ,
                 "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
                 "LEMUR_INSTALL_ROOT": str(install_root),
+                "LEMUR_RELEASE_URL": "https://example.invalid",
             }
             result = subprocess.run(
                 [str(ROOT / "scripts/lemur"), "update"],
@@ -453,6 +454,7 @@ class InstallerLayoutTests(unittest.TestCase):
                 "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
                 "FAKE_INSTALLER": str(fake_installer),
                 "LEMUR_INSTALL_ROOT": str(install_root),
+                "LEMUR_RELEASE_URL": "https://example.invalid",
             }
             subprocess.run(
                 [str(ROOT / "scripts/lemur"), "update", "--non-interactive"],

@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
   "archive": "lemur-linux-x86_64.tar.gz",
-  "archive_url": "https://github.com/ironton-engineering/lemur/releases/latest/download/lemur-linux-x86_64.tar.gz",
+  "archive_url": "https://github.com/ironton-engineering/lemur/releases/download/v0.1.0/lemur-linux-x86_64.tar.gz",
   "size": 0,
   "sha256": "SET_BY_RELEASE_WORKFLOW",
   "cuda_toolkits": {

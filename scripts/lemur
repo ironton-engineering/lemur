@@ -57,8 +57,27 @@ PY
     shift || true
     tmp_file="$(mktemp)"
     trap 'rm -f -- "$tmp_file"' EXIT
+    if [[ -n "${LEMUR_RELEASE_URL:-}" ]]; then
+      base_url="$LEMUR_RELEASE_URL"
+    else
+      base_url="$(
+        python3 - <<'PY'
+import json
+import urllib.request
+
+with urllib.request.urlopen(
+    "https://api.github.com/repos/ironton-engineering/lemur/releases?per_page=1"
+) as response:
+    releases = json.load(response)
+if not releases:
+    raise SystemExit("No published Lemur release was found")
+tag = releases[0]["tag_name"]
+print(f"https://github.com/ironton-engineering/lemur/releases/download/{tag}")
+PY
+      )"
+    fi
     curl --fail --location --proto '=https' --tlsv1.2 \
-      https://github.com/ironton-engineering/lemur/releases/latest/download/install.sh \
+      "$base_url/install.sh" \
       --output "$tmp_file"
     args=()
     if compgen -G "$INSTALL_ROOT/backends/vllm-*" >/dev/null; then

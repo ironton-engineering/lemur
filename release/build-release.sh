@@ -50,6 +50,12 @@ with open(sys.argv[1]) as source:
     manifest = json.load(source)
 manifest["sha256"] = sys.argv[3]
 manifest["size"] = int(sys.argv[4])
+version = manifest.get("version", "")
+if version:
+    manifest["archive_url"] = (
+        f"https://github.com/ironton-engineering/lemur/releases/download/v{version}/"
+        f"{manifest['archive']}"
+    )
 with open(sys.argv[2], "w") as output:
     json.dump(manifest, output, indent=2)
     output.write("\n")

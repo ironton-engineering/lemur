@@ -33,7 +33,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
-base_url="${LEMUR_RELEASE_URL:-https://github.com/${REPOSITORY}/releases/latest/download}"
+resolve_release_base_url() {
+  if [[ -n "${LEMUR_RELEASE_URL:-}" ]]; then
+    printf '%s' "$LEMUR_RELEASE_URL"
+    return
+  fi
+  if [[ -n "${LEMUR_RELEASE_TAG:-}" ]]; then
+    printf 'https://github.com/%s/releases/download/%s' "$REPOSITORY" "$LEMUR_RELEASE_TAG"
+    return
+  fi
+  python3 - "$REPOSITORY" <<'PY'
+import json
+import sys
+import urllib.request
+
+repo = sys.argv[1]
+with urllib.request.urlopen(
+    f"https://api.github.com/repos/{repo}/releases?per_page=1"
+) as response:
+    releases = json.load(response)
+if not releases:
+    raise SystemExit("ERROR: No published Lemur release was found")
+print(f"https://github.com/{repo}/releases/download/{releases[0]['tag_name']}")
+PY
+}
+
+base_url="$(resolve_release_base_url)"
 archive="$tmp_dir/$ARCHIVE_NAME"
 checksum="$archive.sha256"
 manifest="$tmp_dir/manifest.json"

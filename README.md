@@ -18,15 +18,17 @@ Lemur does not support CPU-only inference. The NVIDIA driver must work before in
 ## Install
 
 ```bash
-curl -fsSL https://github.com/ironton-engineering/lemur/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/ironton-engineering/lemur/releases/download/v0.1.0/install.sh | bash
 ```
+
+Pre-releases use a versioned installer URL. After the first stable release, you can use `releases/latest/download/install.sh` instead.
 
 The installer shows each Ubuntu package command before it requests `sudo`. It can install CUDA Toolkit 12.8 on Ubuntu 22.04 and 24.04 or CUDA Toolkit 13.3 on Ubuntu 26.04. It does not install the NVIDIA driver. It builds a pinned llama.cpp release for the GPUs in the machine. The build can take several minutes.
 
 To inspect the installer before execution:
 
 ```bash
-curl -fsSLo install-lemur.sh https://github.com/ironton-engineering/lemur/releases/latest/download/install.sh
+curl -fsSLo install-lemur.sh https://github.com/ironton-engineering/lemur/releases/download/v0.1.0/install.sh
 less install-lemur.sh
 bash install-lemur.sh
 ```
@@ -44,7 +46,7 @@ lemur install-vllm
 You can also install it with Lemur:
 
 ```bash
-curl -fsSL https://github.com/ironton-engineering/lemur/releases/latest/download/install.sh | bash -s -- --with-vllm
+curl -fsSL https://github.com/ironton-engineering/lemur/releases/download/v0.1.0/install.sh | bash -s -- --with-vllm
 ```
 
 The pinned vLLM wheel uses CUDA 12.9 and needs NVIDIA driver 575.51.03 or newer. A failed optional vLLM install does not remove the llama.cpp backend.

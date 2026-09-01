@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -60,6 +61,8 @@ jobs:
         with:
           prerelease: true
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          replace_assets_on_release: true
           files: |
             dist/install.sh
             dist/lemur-linux-x86_64.tar.gz
