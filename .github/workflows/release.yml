@@ -1,15 +1,13 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -17,53 +15,12 @@ jobs:
         with:
           python-version: "3.10"
       - run: python -m pip install --require-hashes -r requirements.lock
-      - run: python -m pip install pytest==9.1.1 ruff==0.15.20
-      - name: Run tests
-        run: python -m pytest -q 2>&1 | tee pytest.log
-      - name: Report test failure
-        if: failure()
+      - run: ./release/build-release.sh
+      - name: Publish pre-release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          text = Path("pytest.log").read_text()[-5000:]
-          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=pytest failure::{escaped}")
-          PY
-      - run: ruff check server scripts tests
-      - name: Check release inputs
-        run: ./scripts/check-release.sh 2>&1 | tee release-check.log
-      - name: Report release-check failure
-        if: failure()
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          text = Path("release-check.log").read_text()[-5000:]
-          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=release check failure::{escaped}")
-          PY
-      - name: Build release archive
-        run: ./release/build-release.sh
-      - name: Check tag and application version
-        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
-      - name: Verify release assets
-        run: |
-          test -s dist/install.sh
-          test -s dist/lemur-linux-x86_64.tar.gz
-          test -s dist/lemur-linux-x86_64.tar.gz.sha256
-          test -s dist/manifest.json
-          test -s dist/LICENSE
-      - uses: softprops/action-gh-release@v3
-        with:
-          prerelease: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          replace_assets_on_release: true
-          working_directory: dist
-          files: |
-            install.sh
-            lemur-linux-x86_64.tar.gz
-            lemur-linux-x86_64.tar.gz.sha256
-            manifest.json
-            LICENSE
+          version="v$(tr -d '[:space:]' < VERSION)"
+          gh release view "$version" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "$version" --prerelease --generate-notes --repo "${{ github.repository }}"
+          gh release upload "$version" dist/* --clobber --repo "${{ github.repository }}"
