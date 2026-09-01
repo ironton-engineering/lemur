@@ -23,28 +23,12 @@ mkdir -p "$stage"
 
 git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null
 git -C "$ROOT" config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
+git -C "$ROOT" archive --format=tar HEAD | tar -xf - -C "$stage"
 
-file_count=0
-(
-  cd "$ROOT"
-  git ls-files --cached --others --exclude-standard -z |
-    while IFS= read -r -d '' file; do
-      case "$file" in
-        .planning/*|dist/*|.cursor/*|*.pyc|*/__pycache__/*) continue ;;
-      esac
-      [[ -e "$file" || -L "$file" ]] || continue
-      file_count=$((file_count + 1))
-      printf '%s\0' "$file"
-    done |
-    tar --null --files-from=- -cf -
-) | tar -xf - -C "$stage"
-
-shopt -s nullglob
-staged=( "$stage"/* )
-(( ${#staged[@]} > 0 )) || {
+if [[ -z "$(find "$stage" -mindepth 1 -print -quit)" ]]; then
   printf 'ERROR: The release archive stage is empty.\n' >&2
   exit 1
-}
+fi
 
 archive="$DIST/$NAME.tar.gz"
 tar -czf "$archive" -C "$tmp_dir" "lemur-$VERSION"

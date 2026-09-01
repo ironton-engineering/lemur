@@ -13,7 +13,7 @@ run_check() {
     apt-get install -y -qq python3 python3-venv python3-pip git ca-certificates sudo >/dev/null
     useradd -m -u 1000 lemurci
     chown -R lemurci:lemurci /src
-    su lemurci -c "
+    su -s /bin/bash lemurci -c "
       set -euo pipefail
       cd /src
       python3 -m venv /tmp/venv
