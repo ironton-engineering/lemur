@@ -12,6 +12,7 @@ run_check() {
     apt-get update -qq
     apt-get install -y -qq python3 python3-venv python3-pip git ca-certificates sudo >/dev/null
     useradd -m -u 1000 lemurci
+    git config --system --add safe.directory /src
     chown -R lemurci:lemurci /src
     su -s /bin/bash lemurci -c "
       set -euo pipefail

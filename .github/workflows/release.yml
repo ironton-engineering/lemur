@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -44,6 +46,8 @@ jobs:
           print(f"::error title=release check failure::{escaped}")
           PY
       - name: Build release archive
+        env:
+          LEMUR_GIT_TREEISH: ${{ github.sha }}
         run: ./release/build-release.sh
       - name: Check tag and application version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"

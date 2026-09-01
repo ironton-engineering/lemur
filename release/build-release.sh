@@ -23,7 +23,8 @@ mkdir -p "$stage"
 
 git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null
 git -C "$ROOT" config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
-git -C "$ROOT" archive --format=tar HEAD | tar -xf - -C "$stage"
+treeish="${LEMUR_GIT_TREEISH:-HEAD}"
+git -C "$ROOT" archive --format=tar "$treeish" | tar -xf - -C "$stage"
 
 if [[ -z "$(find "$stage" -mindepth 1 -print -quit)" ]]; then
   printf 'ERROR: The release archive stage is empty.\n' >&2
