@@ -47,7 +47,18 @@ jobs:
           escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print(f"::error title=release check failure::{escaped}")
           PY
-      - run: ./release/build-release.sh
+      - name: Build release archive
+        run: ./release/build-release.sh 2>&1 | tee release-build.log
+      - name: Report release-build failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("release-build.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=release build failure::{escaped}")
+          PY
       - uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.os }}
