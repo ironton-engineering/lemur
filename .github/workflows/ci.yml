@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.os }}
@@ -21,7 +22,18 @@ jobs:
           cache: pip
       - run: python -m pip install --require-hashes -r requirements.lock
       - run: python -m pip install pytest==9.1.1 ruff==0.15.20
-      - run: python -m pytest -q
+      - name: Run tests
+        run: python -m pytest -q 2>&1 | tee pytest.log
+      - name: Report test failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("pytest.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=pytest failure::{escaped}")
+          PY
       - run: ruff check server scripts tests
       - run: ./scripts/check-release.sh
       - run: ./release/build-release.sh
