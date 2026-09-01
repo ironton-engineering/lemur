@@ -46,8 +46,6 @@ jobs:
           print(f"::error title=release check failure::{escaped}")
           PY
       - name: Build release archive
-        env:
-          LEMUR_GIT_TREEISH: ${{ github.sha }}
         run: ./release/build-release.sh
       - name: Check tag and application version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"

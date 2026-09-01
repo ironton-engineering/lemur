@@ -21,10 +21,15 @@ trap 'rm -rf -- "$tmp_dir"' EXIT
 stage="$tmp_dir/lemur-$VERSION"
 mkdir -p "$stage"
 
-git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null
-git -C "$ROOT" config --global --add safe.directory "$ROOT" >/dev/null 2>&1 || true
-treeish="${LEMUR_GIT_TREEISH:-HEAD}"
-git -C "$ROOT" archive --format=tar "$treeish" | tar -xf - -C "$stage"
+tar -C "$ROOT" \
+  --exclude='.git' \
+  --exclude='dist' \
+  --exclude='.planning' \
+  --exclude='.cursor' \
+  --exclude='.venv' \
+  --exclude='__pycache__' \
+  --exclude='*.pyc' \
+  -cf - . | tar -xf - -C "$stage"
 
 if [[ -z "$(find "$stage" -mindepth 1 -print -quit)" ]]; then
   printf 'ERROR: The release archive stage is empty.\n' >&2
