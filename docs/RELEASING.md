@@ -18,10 +18,9 @@ For each machine, check install, desktop start, `lemur doctor`, model start, upd
 
 ## Publish
 
-1. Create a protected or signed `v<VERSION>` tag.
-2. Let the release workflow build the assets.
-3. Publish the release as a pre-release.
-4. Run the public install command from the release.
-5. Promote the release only after the hardware checks pass.
+1. Run `./scripts/publish-release.sh` after `gh auth login`, or run the **Release** workflow in GitHub Actions.
+2. Keep the release as a pre-release until hardware checks pass.
+3. Verify the install command from the README.
+4. Promote the release only after the hardware checks pass.
 
 The required assets are `install.sh`, `lemur-linux-x86_64.tar.gz`, its SHA-256 file, `manifest.json`, and `LICENSE`.
