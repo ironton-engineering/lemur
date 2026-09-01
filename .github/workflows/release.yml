@@ -57,15 +57,18 @@ jobs:
           PY
       - name: Check tag and application version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
+      - name: Verify release assets
+        run: ls -la dist/
       - uses: softprops/action-gh-release@v3
         with:
           prerelease: true
           generate_release_notes: true
           fail_on_unmatched_files: true
           replace_assets_on_release: true
+          working_directory: dist
           files: |
-            dist/install.sh
-            dist/lemur-linux-x86_64.tar.gz
-            dist/lemur-linux-x86_64.tar.gz.sha256
-            dist/manifest.json
-            dist/LICENSE
+            install.sh
+            lemur-linux-x86_64.tar.gz
+            lemur-linux-x86_64.tar.gz.sha256
+            manifest.json
+            LICENSE
