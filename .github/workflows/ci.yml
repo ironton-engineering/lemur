@@ -35,7 +35,18 @@ jobs:
           print(f"::error title=pytest failure::{escaped}")
           PY
       - run: ruff check server scripts tests
-      - run: ./scripts/check-release.sh
+      - name: Check release inputs
+        run: ./scripts/check-release.sh 2>&1 | tee release-check.log
+      - name: Report release-check failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("release-check.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=release check failure::{escaped}")
+          PY
       - run: ./release/build-release.sh
       - uses: actions/upload-artifact@v6
         with:
