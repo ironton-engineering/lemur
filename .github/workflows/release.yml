@@ -17,10 +17,43 @@ jobs:
           python-version: "3.10"
       - run: python -m pip install --require-hashes -r requirements.lock
       - run: python -m pip install pytest==9.1.1 ruff==0.15.20
-      - run: python -m pytest -q
+      - name: Run tests
+        run: python -m pytest -q 2>&1 | tee pytest.log
+      - name: Report test failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("pytest.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=pytest failure::{escaped}")
+          PY
       - run: ruff check server scripts tests
-      - run: ./scripts/check-release.sh
-      - run: ./release/build-release.sh
+      - name: Check release inputs
+        run: ./scripts/check-release.sh 2>&1 | tee release-check.log
+      - name: Report release-check failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("release-check.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=release check failure::{escaped}")
+          PY
+      - name: Build release archive
+        run: ./release/build-release.sh 2>&1 | tee release-build.log
+      - name: Report release-build failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("release-build.log").read_text()[-5000:]
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=release build failure::{escaped}")
+          PY
       - name: Check tag and application version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
       - uses: softprops/action-gh-release@v3
