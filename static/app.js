@@ -1454,7 +1454,7 @@ function renderAnalyzerResources(rawHist) {
     titleL: "mib",
     titleR: "util%",
     titleLFill: "#6a8ab0",
-    titleRFill: "var(--danger)",
+    titleRFill: "#e06a74",
   });
 }
 
@@ -1534,8 +1534,8 @@ function renderAnalyzerTimeline(rawHist) {
     xLabels: _azXLabels(t0, t1, span, xOfOuter, H - 3),
     titleL: "ctx%",
     titleR: "gen/s",
-    titleLFill: "var(--accent)",
-    titleRFill: "var(--warning)",
+    titleLFill: "#7a9a86",
+    titleRFill: "#c9b06a",
   });
 }
 

@@ -4,6 +4,7 @@ set -euo pipefail
 readonly REPOSITORY="ironton-engineering/lemur"
 readonly BOOTSTRAP_VERSION="0.1.0"
 readonly ARCHIVE_NAME="lemur-linux-x86_64.tar.gz"
+readonly SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -15,11 +16,21 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 
-if [[ -n "${LEMUR_SOURCE_DIR:-}" ]]; then
-  source_dir="$(cd "$LEMUR_SOURCE_DIR" && pwd)"
+source_dir="${LEMUR_SOURCE_DIR:-}"
+installer_args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--local" ]]; then
+    source_dir="$SCRIPT_ROOT"
+  else
+    installer_args+=("$arg")
+  fi
+done
+
+if [[ -n "$source_dir" ]]; then
+  source_dir="$(cd "$source_dir" && pwd)"
   [[ -x "$source_dir/scripts/install-release.sh" ]] || \
-    die "LEMUR_SOURCE_DIR does not contain scripts/install-release.sh"
-  exec "$source_dir/scripts/install-release.sh" "$@"
+    die "The local source does not contain scripts/install-release.sh"
+  exec "$source_dir/scripts/install-release.sh" "${installer_args[@]}"
 fi
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -100,7 +111,7 @@ installer="$tmp_dir/source/scripts/install-release.sh"
 [[ -x "$installer" ]] || die "The release archive has no installer"
 
 trap - EXIT
-"$installer" "$@"
+"$installer" "${installer_args[@]}"
 status=$?
 cleanup
 exit "$status"

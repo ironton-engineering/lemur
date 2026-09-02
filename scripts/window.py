@@ -3,23 +3,35 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 try:
     gi.require_version("WebKit2", "4.1")
 except ValueError:
     gi.require_version("WebKit2", "4.0")
-from gi.repository import Gtk, WebKit2  # noqa: E402
+from gi.repository import Gdk, Gtk, WebKit2  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+ICON_FILE = ROOT / "assets" / "lemur.png"
+
+
+def _apply_window_icon(window: Gtk.Window) -> None:
+    if ICON_FILE.is_file():
+        window.set_icon_from_file(str(ICON_FILE))
+    window.set_icon_name("lemur")
 
 
 def main() -> int:
+    Gdk.set_program_class("Lemur")
     url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:9000"
 
     win = Gtk.Window(title="Lemur")
     win.set_default_size(1800, 1300)
-    win.set_icon_name("utilities-terminal")
+    _apply_window_icon(win)
     win.connect("destroy", Gtk.main_quit)
 
     context = WebKit2.WebContext.get_default()

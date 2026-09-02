@@ -14,7 +14,7 @@
 
 Run a clean default install on Ubuntu 22.04 with an RTX 30-series GPU. Run another clean default install on Ubuntu 24.04 with an RTX 40-series GPU. Run a third clean default install on Ubuntu 26.04 with an RTX 50-series GPU.
 
-For each machine, check install, desktop start, `lemur doctor`, model start, update, rollback, and uninstall. Check optional vLLM on each GPU generation in the release matrix.
+For each machine, check install, desktop start, `lemur doctor`, model start, update, rollback, and uninstall. Check the default vLLM install on each GPU generation in the release matrix. Also check an install with `--no-vllm`.
 
 ## Publish
 

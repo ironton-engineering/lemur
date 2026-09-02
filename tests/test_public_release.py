@@ -127,6 +127,13 @@ class SystemProbeTests(unittest.TestCase):
 
 
 class InstallerLayoutTests(unittest.TestCase):
+    def test_installer_enables_approval_and_vllm_by_default(self):
+        installer = (ROOT / "scripts/install-release.sh").read_text()
+        self.assertIn("WITH_VLLM=1", installer)
+        self.assertIn("ASSUME_YES=1", installer)
+        self.assertIn("--no-vllm) WITH_VLLM=0", installer)
+        self.assertIn("--ask) ASSUME_YES=0", installer)
+
     def test_test_mode_install_is_repeatable_and_uninstall_keeps_user_data(self):
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)
@@ -167,6 +174,29 @@ class InstallerLayoutTests(unittest.TestCase):
             self.assertTrue(state.exists())
             self.assertTrue(model.exists())
 
+    def test_bootstrap_local_option_installs_the_checkout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home"
+            home.mkdir()
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "LEMUR_INSTALL_ROOT": str(home / ".local/share/llm-hub"),
+                "LEMUR_BIN_DIR": str(home / ".local/bin"),
+                "LEMUR_TEST_MODE": "1",
+                "XDG_CONFIG_HOME": str(home / ".config"),
+                "XDG_DATA_HOME": str(home / ".local/share"),
+            }
+            subprocess.run(
+                [str(ROOT / "install.sh"), "--local", "--no-desktop"],
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue((home / ".local/share/llm-hub/current").is_symlink())
+            self.assertTrue((home / ".local/bin/lemur").is_symlink())
+
     def test_command_help_and_version(self):
         help_result = subprocess.run(
             [str(ROOT / "scripts/lemur"), "help"],
@@ -190,6 +220,7 @@ class InstallerLayoutTests(unittest.TestCase):
 
     def test_release_window_has_no_development_browser_controls(self):
         window = (ROOT / "scripts/window.py").read_text()
+        self.assertIn('gi.require_version("Gdk", "3.0")', window)
         self.assertNotIn("set_enable_developer_extras(True)", window)
         self.assertNotIn("KEY_F5", window)
 
@@ -380,6 +411,7 @@ class InstallerLayoutTests(unittest.TestCase):
                 [
                     str(ROOT / "scripts/install-release.sh"),
                     "--no-desktop",
+                    "--ask",
                     "--non-interactive",
                 ],
                 env=env,

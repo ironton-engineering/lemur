@@ -9,9 +9,9 @@ INSTALL_ROOT="${LEMUR_INSTALL_ROOT:-$HOME/.local/share/llm-hub}"
 BIN_DIR="${LEMUR_BIN_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/lemur"
 VERSION="$(tr -d '[:space:]' < "$SOURCE_ROOT/VERSION")"
-WITH_VLLM=0
+WITH_VLLM=1
 WITH_DESKTOP=1
-ASSUME_YES=0
+ASSUME_YES=1
 NONINTERACTIVE=0
 TEST_MODE="${LEMUR_TEST_MODE:-0}"
 
@@ -31,9 +31,11 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [options]
 
-  --with-vllm      Install the optional vLLM backend.
+  --with-vllm      Install the vLLM backend. This is the default.
+  --no-vllm        Do not install the vLLM backend.
   --no-desktop     Do not install the desktop launcher.
-  --yes            Approve the shown Ubuntu package commands.
+  --yes            Approve Ubuntu package commands. This is the default.
+  --ask            Ask before Ubuntu package commands.
   --non-interactive  Stop if approval is required.
   --version        Show the Lemur version.
   --help           Show this help.
@@ -43,8 +45,10 @@ EOF
 while (($#)); do
   case "$1" in
     --with-vllm) WITH_VLLM=1 ;;
+    --no-vllm) WITH_VLLM=0 ;;
     --no-desktop) WITH_DESKTOP=0 ;;
     --yes) ASSUME_YES=1 ;;
+    --ask) ASSUME_YES=0 ;;
     --non-interactive) NONINTERACTIVE=1 ;;
     --version) say "Lemur $VERSION"; exit 0 ;;
     --help|-h) usage; exit 0 ;;
