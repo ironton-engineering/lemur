@@ -221,8 +221,64 @@ class InstallerLayoutTests(unittest.TestCase):
     def test_release_window_has_no_development_browser_controls(self):
         window = (ROOT / "scripts/window.py").read_text()
         self.assertIn('gi.require_version("Gdk", "3.0")', window)
+        self.assertIn(
+            'APPLICATION_ID = "io.github.ironton_engineering.Lemur"', window
+        )
+        self.assertIn("Gtk.ApplicationWindow", window)
         self.assertNotIn("set_enable_developer_extras(True)", window)
         self.assertNotIn("KEY_F5", window)
+
+    def test_interface_has_three_primary_tabs_and_settings(self):
+        page = (ROOT / "static/index.html").read_text()
+        script = (ROOT / "static/app.js").read_text()
+        self.assertEqual(page.count('role="tab"'), 3)
+        self.assertIn(">Download Models</button>", page)
+        self.assertIn(">Load Models</button>", page)
+        self.assertIn(">Model Analyzer</button>", page)
+        self.assertIn('id="hf-search-form"', page)
+        self.assertIn('id="tab-load" class="main tab-page"', page)
+        self.assertIn('id="btn-settings"', page)
+        self.assertIn('id="welcome-dialog"', page)
+        self.assertIn('id="welcome-show-startup"', page)
+        self.assertEqual(page.count('data-welcome-tab="'), 3)
+        self.assertIn('id="btn-welcome-prev"', page)
+        self.assertIn('id="btn-welcome-next"', page)
+        self.assertEqual(page.count('data-welcome-slide="'), 3)
+        self.assertIn("renderWelcomeSlide", script)
+        self.assertIn("startWelcomeAutoplay", script)
+        self.assertIn("prefers-reduced-motion: reduce", script)
+        self.assertIn("5000", script)
+        self.assertIn("slide-from-right", script)
+        self.assertIn("(index + slides.length) % slides.length", script)
+        self.assertNotIn('welcomeDialog.addEventListener("mouseenter"', script)
+        self.assertIn('id="settings-show-splash"', page)
+        self.assertIn("show_splash_on_startup", script)
+        self.assertNotIn(">[cfg]</button>", page)
+        improvements = [
+            "hf-avatar",
+            "hf-author-link",
+            'value="downloads"',
+            'value="likes"',
+            'value="lastModified"',
+            'value="name"',
+            "btn-hf-direction",
+            "btn-hf-more",
+            "btn-hf-clear",
+            "hf-suggestion",
+            "hf-result-count",
+            "compactNumber(model.downloads)",
+            "model.license",
+            "model.gated",
+            "shortDate(model.updated)",
+            "hf-file-filter",
+            "btn-hf-select-all",
+            "hf-selection-summary",
+            "recommended",
+            "hf-progress-bar",
+        ]
+        combined = page + script
+        for improvement in improvements:
+            self.assertIn(improvement, combined)
 
     def test_vllm_installer_uses_a_checked_relocatable_environment(self):
         installer = (ROOT / "scripts/install-vllm.sh").read_text()
@@ -306,9 +362,15 @@ class InstallerLayoutTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            desktop = home / ".local/share/applications/lemur.desktop"
+            desktop = (
+                home
+                / ".local/share/applications/io.github.ironton_engineering.Lemur.desktop"
+            )
             self.assertTrue(desktop.is_file())
             self.assertIn(str(home / ".local/bin/lemur"), desktop.read_text())
+            self.assertFalse(
+                (home / ".local/share/applications/lemur.desktop").exists()
+            )
             self.assertFalse((home / "Desktop/Lemur.desktop").exists())
 
     def test_bootstrap_rejects_a_bad_archive_checksum(self):

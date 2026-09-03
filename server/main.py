@@ -11,11 +11,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
-from server import analyzer, codex, config, gguf_meta, gpu, io_trace, models, processes
+from server import analyzer, codex, config, gguf_meta, gpu, huggingface, io_trace, models, processes
 from server.aliases import model_alias
 from server.openai_normalize import normalize_openai_body
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
 
@@ -74,6 +75,7 @@ class SettingsUpdate(BaseModel):
     default_host: str | None = None
     port_start: int | None = None
     ui_font_size: int | None = None
+    show_splash_on_startup: bool | None = None
 
 
 class NetworkAccessUpdate(BaseModel):
@@ -97,6 +99,11 @@ class CodexSyncRequest(BaseModel):
 
 class FavoriteCreate(BaseModel):
     server_id: str
+
+
+class HuggingFaceDownloadRequest(BaseModel):
+    repo_id: str
+    files: list[str]
 
 
 def _sync_codex(default: str | None = None, context_window: int | None = None) -> dict:
@@ -354,6 +361,49 @@ def api_models_refresh():
     except Exception as e:
         sync = {"error": str(e)}
     return {"models": out, "count": len(out), "codex": sync}
+
+
+@app.get("/api/huggingface/models")
+def api_huggingface_models(
+    q: str,
+    limit: int = 20,
+    sort: str = "downloads",
+    direction: int = -1,
+):
+    try:
+        limit = max(1, min(99, limit))
+        models_found = huggingface.search_models(q, limit + 1, sort, direction)
+        return {
+            "models": models_found[:limit],
+            "has_more": len(models_found) > limit,
+            "limit": limit,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/huggingface/models/{author}/{name}")
+def api_huggingface_model(author: str, name: str):
+    try:
+        return huggingface.model_files(f"{author}/{name}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/huggingface/downloads")
+def api_huggingface_download(req: HuggingFaceDownloadRequest):
+    try:
+        return huggingface.start_download(req.repo_id, req.files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/huggingface/downloads/{job_id}")
+def api_huggingface_download_status(job_id: str):
+    try:
+        return huggingface.download_status(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/gpus")
@@ -987,6 +1037,9 @@ async def v1_responses(request: Request):
 def v1_health():
     return {"status": "ok", "running": processes.running_aliases()}
 
+
+if ASSET_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(ASSET_DIR)), name="assets")
 
 if STATIC_DIR.is_dir():
     app.mount("/", NoCacheStaticFiles(directory=str(STATIC_DIR), html=True), name="static")

@@ -6,9 +6,73 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <title>Lemur</title>
-  <link rel="stylesheet" href="styles.css?v=20260822a">
+  <link rel="stylesheet" href="styles.css?v=20260902c">
 </head>
 <body>
+  <dialog id="welcome-dialog" class="welcome-dialog" aria-labelledby="welcome-title">
+    <div class="welcome-shell">
+      <header class="welcome-head">
+        <div class="welcome-mark" aria-hidden="true">
+          <img src="/assets/lemur.png" alt="">
+        </div>
+        <div>
+          <h2 id="welcome-title">Welcome to Lemur</h2>
+          <p class="welcome-lede">Find a model, load it, and check its performance.</p>
+        </div>
+      </header>
+
+      <div class="welcome-gallery" aria-label="Lemur feature gallery">
+        <div class="welcome-slides" aria-live="polite">
+          <section class="welcome-slide active" data-welcome-tab="download" aria-label="Slide 1 of 3">
+            <span class="welcome-slide-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v2h14v-2"/></svg>
+            </span>
+            <span class="welcome-slide-number">1 / 3</span>
+            <h3>Discover models</h3>
+            <p>Search Hugging Face and download GGUF files.</p>
+          </section>
+          <section class="welcome-slide" data-welcome-tab="load" aria-label="Slide 2 of 3" hidden>
+            <span class="welcome-slide-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3M10 9l5 3-5 3V9z"/></svg>
+            </span>
+            <span class="welcome-slide-number">2 / 3</span>
+            <h3>Load a model</h3>
+            <p>Pick a model and press start — Lemur uses your GPU automatically.</p>
+          </section>
+          <section class="welcome-slide" data-welcome-tab="analyzer" aria-label="Slide 3 of 3" hidden>
+            <span class="welcome-slide-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3M2 21h20"/></svg>
+            </span>
+            <span class="welcome-slide-number">3 / 3</span>
+            <h3>Check performance</h3>
+            <p>See memory, token, request, and server activity.</p>
+          </section>
+          <button type="button" id="btn-welcome-prev" class="welcome-arrow welcome-arrow-prev" aria-label="Previous slide">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5"/></svg>
+          </button>
+          <button type="button" id="btn-welcome-next" class="welcome-arrow welcome-arrow-next" aria-label="Next slide">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="welcome-dots" role="tablist" aria-label="Select a slide">
+        <button type="button" class="welcome-dot active" data-welcome-slide="0" aria-label="Show slide 1" aria-selected="true"></button>
+        <button type="button" class="welcome-dot" data-welcome-slide="1" aria-label="Show slide 2" aria-selected="false"></button>
+        <button type="button" class="welcome-dot" data-welcome-slide="2" aria-label="Show slide 3" aria-selected="false"></button>
+      </div>
+
+      <footer class="welcome-footer">
+        <label class="welcome-check">
+          <input type="checkbox" id="welcome-show-startup" checked>
+          <span class="welcome-check-box" aria-hidden="true"></span>
+          <span>Show on startup</span>
+        </label>
+        <button type="button" id="btn-welcome-continue" class="btn btn-primary welcome-continue">Continue to Lemur <span aria-hidden="true">→</span></button>
+      </footer>
+    </div>
+  </dialog>
+
   <div class="app">
     <header class="header">
         <div class="brand tip" data-tip="Local control panel for llama.cpp servers, GPU placement, chat, and Codex">
@@ -16,14 +80,62 @@
         <h1>Lemur</h1>
         <p class="brand-tag">llama.cpp // local inference control</p>
       </div>
+      <nav class="app-tabs" role="tablist" aria-label="Lemur pages">
+        <button type="button" id="tab-btn-download" class="app-tab" role="tab" aria-selected="false" aria-controls="tab-download" data-tab="download">Download Models</button>
+        <button type="button" id="tab-btn-load" class="app-tab active" role="tab" aria-selected="true" aria-controls="tab-load" data-tab="load">Load Models</button>
+        <button type="button" id="tab-btn-analyzer" class="app-tab" role="tab" aria-selected="false" aria-controls="analyzer-overlay" data-tab="analyzer">Model Analyzer</button>
+      </nav>
       <div class="header-actions">
-        <button type="button" id="btn-analyzer" class="btn btn-ghost tip" data-tip="Open the live process analyzer: VRAM, throughput, ctx/gen timeline">[analyzer]</button>
         <button type="button" id="btn-refresh" class="btn btn-ghost tip" data-tip="Rescan the filesystem for GGUF / HuggingFace models">[refresh]</button>
-        <button type="button" id="btn-settings" class="btn btn-ghost tip" data-tip="UI and server settings (font size, llama-server path, scan root)" aria-label="Settings">[cfg]</button>
+        <button type="button" id="btn-settings" class="btn btn-ghost tip" data-tip="Open UI and server settings" aria-label="Settings">[settings]</button>
       </div>
     </header>
 
-    <main class="main">
+    <section id="tab-download" class="hf-page tab-page hidden" role="tabpanel" aria-labelledby="tab-btn-download">
+      <section class="hf-search">
+        <div class="hf-search-head">
+          <h2><span class="accent">›</span> Hugging Face model hub</h2>
+          <p class="muted">Search GGUF models and download files to ~/models.</p>
+        </div>
+        <form id="hf-search-form" class="hf-search-main">
+          <input type="search" id="hf-search-input" placeholder="Search models, for example Qwen GGUF" autocomplete="off" required>
+          <button type="submit" id="btn-hf-search" class="btn btn-primary">search</button>
+          <button type="button" id="btn-hf-clear" class="btn btn-ghost">clear</button>
+        </form>
+        <div class="hf-suggestions" aria-label="Search suggestions">
+          <span class="muted">try:</span>
+          <button type="button" class="hf-suggestion" data-query="Qwen GGUF">Qwen</button>
+          <button type="button" class="hf-suggestion" data-query="Llama GGUF">Llama</button>
+          <button type="button" class="hf-suggestion" data-query="Mistral GGUF">Mistral</button>
+          <button type="button" class="hf-suggestion" data-query="Gemma GGUF">Gemma</button>
+          <button type="button" class="hf-suggestion" data-query="vision GGUF">Vision</button>
+        </div>
+      </section>
+      <div class="hf-toolbar">
+        <div><span id="hf-result-count">0 results</span><span id="hf-status" class="hf-status muted"> · Search Hugging Face to find a model.</span></div>
+        <div class="hf-sort-controls">
+          <label for="hf-sort">sort by</label>
+          <select id="hf-sort">
+            <option value="downloads">downloads</option>
+            <option value="likes">likes</option>
+            <option value="lastModified">updated</option>
+            <option value="name">name</option>
+          </select>
+          <button type="button" id="btn-hf-direction" class="btn btn-ghost btn-tiny" data-direction="-1" aria-label="Sort descending">↓</button>
+        </div>
+      </div>
+      <div class="hf-layout">
+        <div class="hf-results-pane">
+          <div id="hf-results" class="hf-results"></div>
+          <button type="button" id="btn-hf-more" class="btn btn-ghost hidden">see more</button>
+        </div>
+        <aside id="hf-detail" class="hf-detail">
+          <p class="muted">Select a model to see its GGUF files.</p>
+        </aside>
+      </div>
+    </section>
+
+    <main id="tab-load" class="main tab-page" role="tabpanel" aria-labelledby="tab-btn-load">
       <section class="panel panel-models">
         <div class="panel-head">
           <h2 class="tip" data-tip="Saved one-click model launch presets"><span class="accent">›</span> favorites</h2>
@@ -46,28 +158,22 @@
           <h2 class="tip" data-tip="Configure and start a llama-server instance"><span class="accent">›</span> launch</h2>
           <form id="launch-form" class="launch-form">
             <div class="launch-form-fields">
+            <p id="launch-hint" class="field-hint launch-hint">Choose a model on the left, then press start.</p>
             <div class="field">
-              <label class="tip" data-tip="Model chosen from the list on the left">selected</label>
-              <div id="selected-model" class="selected-model muted">// pick a model</div>
+              <label class="tip" data-tip="Model chosen from the list on the left">model</label>
+              <div id="selected-model" class="selected-model muted">Choose a model from the list</div>
             </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="gpu-select" class="tip" data-tip="Primary GPU (CUDA device) for this server. Sets CUDA_VISIBLE_DEVICES order.">gpu</label>
+            <div class="field hidden" id="gpu-single-wrap">
+              <label class="tip" data-tip="Detected graphics card used for inference">graphics card</label>
+              <div id="gpu-single" class="selected-model"></div>
+            </div>
+            <div class="field-row" id="launch-device-row">
+              <div class="field hidden" id="gpu-field">
+                <label for="gpu-select" class="tip" data-tip="Which graphics card should run this model">graphics card</label>
                 <select id="gpu-select" required></select>
               </div>
               <div class="field">
-                <label for="spill-select" class="tip" data-tip="Allow overflow when model+context does not fit the primary GPU. RAM and mismatched GPUs are capacity fallbacks and can be much slower.">spill</label>
-                <select id="spill-select">
-                  <option value="none" selected>gpu only</option>
-                  <option value="ram">allow ram fallback</option>
-                  <option value="gpu">use other gpu</option>
-                  <option value="both">other gpu + ram fallback</option>
-                </select>
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="ctx-select" class="tip" data-tip="Context window size in tokens (-c). Larger = longer chats/tools but much more VRAM for the KV cache.">ctx</label>
+                <label for="ctx-select" class="tip" data-tip="How much conversation history the model can remember. Larger values use more VRAM.">context length</label>
                 <select id="ctx-select">
                   <option value="4096">4k</option>
                   <option value="8192" selected>8k</option>
@@ -81,6 +187,36 @@
                   <option value="custom">custom</option>
                 </select>
               </div>
+            </div>
+            <div class="field">
+              <label for="spill-select" class="tip" data-tip="What to do when the model and context window do not fit in GPU memory">if it won't fit in VRAM</label>
+              <select id="spill-select"></select>
+              <p id="spill-hint" class="field-hint spill-hint"></p>
+            </div>
+            <div class="field field-start">
+              <button type="submit" id="btn-start" class="btn btn-primary tip" data-tip="Start llama-server with these settings and sync the Codex profile" disabled>start()</button>
+            </div>
+            <details class="launch-advanced">
+              <summary>advanced options</summary>
+              <div class="launch-advanced-body">
+            <div class="field hidden" id="ctx-custom-wrap">
+              <label for="ctx-custom" class="tip" data-tip="Custom context size in tokens (512–1048576). Drag to set.">custom context</label>
+              <div class="ctx-slider-row">
+                <input type="range" id="ctx-custom" min="512" max="1048576" step="512" value="8192">
+                <span id="ctx-custom-val" class="ctx-slider-val">8k</span>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ngl-input" class="tip" data-tip="How many model layers stay on the GPU. 999 means all layers. Only applies when VRAM overflow is set to GPU only.">gpu layers</label>
+                <div class="num-wrap">
+                  <input type="number" id="ngl-input" value="999" min="0">
+                  <div class="num-steppers" aria-hidden="true">
+                    <button type="button" class="num-step" data-target="ngl-input" data-dir="1">▴</button>
+                    <button type="button" class="num-step" data-target="ngl-input" data-dir="-1">▾</button>
+                  </div>
+                </div>
+              </div>
               <div class="field">
                 <label for="port-input" class="tip" data-tip="TCP port for this llama-server. Leave empty to auto-pick the next free port from 8080.">port</label>
                 <div class="num-wrap">
@@ -90,29 +226,6 @@
                     <button type="button" class="num-step" data-target="port-input" data-dir="-1">▾</button>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div class="field hidden" id="ctx-custom-wrap">
-              <label for="ctx-custom" class="tip" data-tip="Custom context size in tokens (512–1048576). Drag to set.">custom ctx</label>
-              <div class="ctx-slider-row">
-                <input type="range" id="ctx-custom" min="512" max="1048576" step="512" value="8192">
-                <span id="ctx-custom-val" class="ctx-slider-val">8k</span>
-              </div>
-            </div>
-            <div class="field-row field-row-launch">
-              <div class="field">
-                <label for="ngl-input" class="tip" data-tip="GPU layers (-ngl). 999/all = fully offload to GPU. Ignored when spill ≠ gpu only (then ngl=auto).">ngl</label>
-                <div class="num-wrap">
-                  <input type="number" id="ngl-input" value="999" min="0">
-                  <div class="num-steppers" aria-hidden="true">
-                    <button type="button" class="num-step" data-target="ngl-input" data-dir="1">▴</button>
-                    <button type="button" class="num-step" data-target="ngl-input" data-dir="-1">▾</button>
-                  </div>
-                </div>
-              </div>
-              <div class="field field-start">
-                <label class="label-spacer" for="btn-start">start</label>
-                <button type="submit" id="btn-start" class="btn btn-primary tip" data-tip="Start llama-server with these settings and sync the Codex profile" disabled>start()</button>
               </div>
             </div>
             <div class="field-row field-row-opts">
@@ -146,6 +259,8 @@
                 <div id="vision-mmproj" class="selected-model muted tip" data-tip="Detected mmproj beside the selected model">// none</div>
               </div>
             </div>
+              </div>
+            </details>
             </div>
             <div id="vram-estimate" class="vram-est hidden" aria-live="polite">
               <div class="vram-est-top">
@@ -174,12 +289,10 @@
       </aside>
     </main>
 
-  </div>
-
-  <div id="analyzer-overlay" class="analyzer-overlay hidden" aria-hidden="true">
-    <section class="analyzer" role="dialog" aria-label="Process analyzer">
+    <div id="analyzer-overlay" class="analyzer-overlay tab-page hidden" role="tabpanel" aria-labelledby="tab-btn-analyzer" aria-hidden="true">
+      <section class="analyzer" aria-label="Process analyzer">
       <header class="az-head">
-        <button type="button" id="btn-az-back" class="btn btn-ghost tip" data-tip="Return to the main control panel">← back</button>
+        <button type="button" id="btn-az-back" class="btn btn-ghost tip" data-tip="Return to model loading">← load models</button>
         <div class="az-title">
           <h2 class="tip" data-tip="Live telemetry from llama-server, nvidia-smi, and process RSS">process analyzer</h2>
           <p id="az-subtitle" class="muted">live llama-server telemetry</p>
@@ -243,7 +356,8 @@
           </section>
         </div>
       </div>
-    </section>
+      </section>
+    </div>
   </div>
 
   <div id="chat-overlay" class="chat-overlay hidden" aria-hidden="true">
@@ -285,6 +399,11 @@
           <span id="settings-font-size-val" class="font-size-val">15px</span>
         </div>
       </div>
+      <label class="check-toggle settings-welcome-toggle">
+        <input type="checkbox" id="settings-show-splash">
+        <span class="check-toggle-box" aria-hidden="true"></span>
+        <span class="check-toggle-label">Show welcome screen on startup</span>
+      </label>
 
       <h3 class="settings-section tip" data-tip="llama-server binary and model discovery options">server</h3>
       <div class="field">
@@ -325,6 +444,6 @@
     <button type="button" id="btn-close-logs" class="btn btn-ghost tip" data-tip="Close the logs dialog">[close]</button>
   </dialog>
 
-  <script src="app.js?v=20260822a"></script>
+  <script src="app.js?v=20260902c"></script>
 </body>
 </html>

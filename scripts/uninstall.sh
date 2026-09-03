@@ -41,6 +41,7 @@ targets=(
   "$INSTALL_ROOT"
   "$BIN_DIR/lemur"
   "$DATA_DIR/applications/lemur.desktop"
+  "$DATA_DIR/applications/io.github.ironton_engineering.Lemur.desktop"
   "$DATA_DIR/icons/hicolor/scalable/apps/lemur.svg"
   "$DATA_DIR/icons/hicolor/scalable/apps/lemur.png"
 )

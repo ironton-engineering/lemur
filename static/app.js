@@ -2,6 +2,16 @@ const state = {
   models: [],
   favorites: [],
   modelsExpanded: false,
+  welcomeSlide: 0,
+  welcomeTimer: null,
+  activeTab: "load",
+  previousTab: "load",
+  hfModels: [],
+  hfRepo: null,
+  hfJobTimer: null,
+  hfLimit: 20,
+  hfHasMore: false,
+  hfSelectedFiles: new Set(),
   gpus: [],
   servers: [],
   settings: {},
@@ -243,6 +253,270 @@ function setModelsExpanded(expanded) {
   if (state.modelsExpanded) $("#model-search")?.focus();
 }
 
+let modelsPanelDefaultApplied = false;
+
+function applyModelsPanelDefault(prevFavoriteCount) {
+  const count = state.favorites.length;
+  if (!modelsPanelDefaultApplied) {
+    setModelsExpanded(count === 0);
+    modelsPanelDefaultApplied = true;
+    return;
+  }
+  if (prevFavoriteCount === 0 && count > 0) {
+    setModelsExpanded(false);
+  } else if (prevFavoriteCount > 0 && count === 0) {
+    setModelsExpanded(true);
+  }
+}
+
+function setTabSelection(tab) {
+  document.querySelectorAll(".app-tab").forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+}
+
+function showMainTab(tab) {
+  const next = tab === "load" ? "load" : "download";
+  state.activeTab = next;
+  state.previousTab = next;
+  $("#tab-download").classList.toggle("hidden", next !== "download");
+  $("#tab-load").classList.toggle("hidden", next !== "load");
+  $("#analyzer-overlay").classList.add("hidden");
+  $("#analyzer-overlay").setAttribute("aria-hidden", "true");
+  document.body.classList.remove("analyzer-open");
+  setTabSelection(next);
+  closeAnalyzerIo();
+  if (state.analyzerTimer) {
+    clearInterval(state.analyzerTimer);
+    state.analyzerTimer = null;
+  }
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (!value) return "size unknown";
+  const gib = value / 1024 ** 3;
+  return gib >= 1 ? `${gib.toFixed(gib >= 10 ? 1 : 2)} GB` : `${(value / 1024 ** 2).toFixed(0)} MB`;
+}
+
+function compactNumber(value) {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+    Number(value) || 0
+  );
+}
+
+function shortDate(value) {
+  if (!value) return "date unknown";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "date unknown" : date.toLocaleDateString();
+}
+
+function renderHuggingFaceModels() {
+  const results = $("#hf-results");
+  if (!state.hfModels.length) {
+    results.innerHTML = '<p class="muted">No GGUF models found.</p>';
+    return;
+  }
+  let models = [...state.hfModels];
+  const sort = $("#hf-sort")?.value || "downloads";
+  const direction = Number($("#btn-hf-direction")?.dataset.direction || -1);
+  if (sort === "name") {
+    models.sort((a, b) => direction * a.id.localeCompare(b.id));
+  }
+  results.innerHTML = models
+    .map((model) => `<article class="hf-model ${state.hfRepo?.id === model.id ? "selected" : ""}">
+      <img class="hf-avatar" src="${escapeHtml(model.avatar_url)}" alt="${escapeHtml(model.author)} profile picture" loading="lazy">
+      <button type="button" class="hf-model-select" data-repo="${escapeHtml(model.id)}">
+        <span class="hf-model-name">${escapeHtml(model.id)}</span>
+        <span class="hf-model-meta">↓ ${compactNumber(model.downloads)} · ♥ ${compactNumber(model.likes)} · ${model.gguf_count} GGUF · updated ${shortDate(model.updated)}</span>
+        <span class="hf-badges"><span class="hf-badge">${escapeHtml(model.license || "license unknown")}</span>${model.gated ? '<span class="hf-badge gated">gated</span>' : ""}</span>
+      </button>
+      <a class="hf-author-link" href="${escapeHtml(model.author_url)}" target="_blank" rel="noreferrer">${escapeHtml(model.author)} ↗</a>
+    </article>`)
+    .join("");
+  results.querySelectorAll(".hf-model-select").forEach((button) => {
+    button.addEventListener("click", () => loadHuggingFaceModel(button.dataset.repo));
+  });
+}
+
+async function searchHuggingFace(e, more = false) {
+  if (e) e.preventDefault();
+  const query = $("#hf-search-input").value.trim();
+  if (query.length < 2) return;
+  state.hfLimit = more ? Math.min(99, state.hfLimit + 20) : 20;
+  $("#btn-hf-search").disabled = true;
+  $("#hf-status").textContent = "Searching Hugging Face…";
+  try {
+    const sort = $("#hf-sort").value;
+    const apiSort = sort === "name" ? "downloads" : sort;
+    const direction = $("#btn-hf-direction").dataset.direction;
+    const data = await api(
+      `/api/huggingface/models?q=${encodeURIComponent(query)}&limit=${state.hfLimit}&sort=${encodeURIComponent(apiSort)}&direction=${direction}`
+    );
+    state.hfModels = data.models || [];
+    state.hfHasMore = Boolean(data.has_more);
+    state.hfRepo = null;
+    renderHuggingFaceModels();
+    $("#hf-detail").innerHTML = '<p class="muted">Select a model to see its GGUF files.</p>';
+    $("#hf-result-count").textContent = `${state.hfModels.length}${state.hfHasMore ? "+" : ""} results`;
+    $("#hf-status").textContent = ` · Search: ${query}`;
+    $("#btn-hf-more").classList.toggle("hidden", !state.hfHasMore);
+  } catch (err) {
+    $("#hf-status").textContent = err.message;
+  } finally {
+    $("#btn-hf-search").disabled = false;
+  }
+}
+
+async function loadHuggingFaceModel(repoId) {
+  if (!repoId) return;
+  $("#hf-status").textContent = `Loading ${repoId}…`;
+  try {
+    const path = repoId.split("/").map(encodeURIComponent).join("/");
+    state.hfRepo = await api(`/api/huggingface/models/${path}`);
+    state.hfSelectedFiles = new Set();
+    renderHuggingFaceModels();
+    renderHuggingFaceFiles();
+    $("#hf-status").textContent = `${state.hfRepo.files.length} GGUF files available.`;
+  } catch (err) {
+    $("#hf-status").textContent = err.message;
+  }
+}
+
+function quantizationLabel(name) {
+  const match = name.toUpperCase().match(/(?:^|[-_/])(UD-)?(IQ\d_[A-Z0-9]+|Q\d_[A-Z0-9]+|BF16|F16|NVFP4)(?:[-_.]|$)/);
+  return match ? `${match[1] || ""}${match[2]}` : "GGUF";
+}
+
+function isRecommendedQuant(name) {
+  const upper = name.toUpperCase();
+  return upper.includes("Q4_K_M") || upper.includes("Q4_0");
+}
+
+function updateHuggingFaceSelection() {
+  const selected = state.hfRepo?.files.filter((file) => state.hfSelectedFiles.has(file.name)) || [];
+  const total = selected.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  const summary = $("#hf-selection-summary");
+  if (summary) summary.textContent = `${selected.length} selected · ${formatBytes(total)}`;
+  const button = $("#btn-hf-download");
+  if (button) {
+    button.disabled = !selected.length;
+    button.textContent = selected.length ? `download ${selected.length} file${selected.length === 1 ? "" : "s"}` : "download selected";
+  }
+}
+
+function renderHuggingFaceFiles() {
+  const repo = state.hfRepo;
+  if (!repo) return;
+  const rawQuery = $("#hf-file-filter")?.value || "";
+  const query = rawQuery.toLowerCase();
+  const visibleFiles = repo.files.filter((file) => file.name.toLowerCase().includes(query));
+  const files = visibleFiles
+    .map((file) => `<label class="hf-file">
+      <input type="checkbox" class="hf-file-check" value="${escapeHtml(file.name)}" ${state.hfSelectedFiles.has(file.name) ? "checked" : ""}>
+      <span><span class="hf-model-name">${escapeHtml(file.name)}</span><span class="hf-file-meta">${formatBytes(file.size)} · ${quantizationLabel(file.name)}</span></span>
+      ${isRecommendedQuant(file.name) ? '<span class="hf-badge recommended">recommended</span>' : ""}
+    </label>`)
+    .join("");
+  $("#hf-detail").innerHTML = `<div class="hf-detail-head">
+      <h2>${escapeHtml(repo.id)}</h2>
+      <span class="hf-model-meta">${repo.gated ? "HF_TOKEN is required · " : ""}<a href="${escapeHtml(repo.url)}" target="_blank" rel="noreferrer">open model card</a></span>
+    </div>
+    <div class="hf-file-toolbar">
+      <input type="search" id="hf-file-filter" value="${escapeHtml(rawQuery)}" placeholder="Filter GGUF files">
+      <button type="button" id="btn-hf-select-all" class="btn btn-ghost btn-tiny">select all</button>
+      <button type="button" id="btn-hf-select-none" class="btn btn-ghost btn-tiny">clear</button>
+      <span id="hf-selection-summary" class="hf-selection-summary"></span>
+    </div>
+    <div>${files || '<p class="muted">No matching GGUF files.</p>'}</div>
+    <div class="hf-download-actions">
+      <button type="button" id="btn-hf-download" class="btn btn-primary" disabled>download selected</button>
+    </div>
+    <div id="hf-download-progress" class="hf-download-progress hidden"></div>`;
+  $("#hf-file-filter").addEventListener("input", (event) => {
+    const position = event.target.selectionStart;
+    renderHuggingFaceFiles();
+    const next = $("#hf-file-filter");
+    next.focus();
+    next.setSelectionRange(position, position);
+  });
+  $("#btn-hf-select-all").addEventListener("click", () => {
+    visibleFiles.forEach((file) => state.hfSelectedFiles.add(file.name));
+    renderHuggingFaceFiles();
+  });
+  $("#btn-hf-select-none").addEventListener("click", () => {
+    state.hfSelectedFiles.clear();
+    renderHuggingFaceFiles();
+  });
+  document.querySelectorAll(".hf-file-check").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) state.hfSelectedFiles.add(input.value);
+      else state.hfSelectedFiles.delete(input.value);
+      updateHuggingFaceSelection();
+    });
+  });
+  $("#btn-hf-download")?.addEventListener("click", startHuggingFaceDownload);
+  updateHuggingFaceSelection();
+}
+
+async function startHuggingFaceDownload() {
+  const files = Array.from(state.hfSelectedFiles);
+  if (!files.length) {
+    $("#hf-status").textContent = "Select at least one GGUF file.";
+    return;
+  }
+  const button = $("#btn-hf-download");
+  button.disabled = true;
+  try {
+    const job = await api("/api/huggingface/downloads", {
+      method: "POST",
+      body: JSON.stringify({ repo_id: state.hfRepo.id, files }),
+    });
+    watchHuggingFaceDownload(job.id);
+  } catch (err) {
+    button.disabled = false;
+    $("#hf-status").textContent = err.message;
+  }
+}
+
+async function watchHuggingFaceDownload(jobId) {
+  if (state.hfJobTimer) clearTimeout(state.hfJobTimer);
+  try {
+    const job = await api(`/api/huggingface/downloads/${encodeURIComponent(jobId)}`);
+    const progress = $("#hf-download-progress");
+    const pct = job.total_bytes
+      ? Math.min(100, (100 * job.downloaded_bytes) / job.total_bytes)
+      : 0;
+    progress.classList.remove("hidden");
+    const message = job.status === "complete"
+      ? `Complete: ${job.path}`
+      : job.status === "failed"
+        ? `Download failed: ${job.error}`
+        : `${pct.toFixed(1)}% complete`;
+    const detail = job.status === "downloading"
+      ? `file ${job.file_index}/${job.file_count} · ${job.file || "starting"} · destination ~/models/HuggingFace/${job.repo_id}`
+      : job.status;
+    progress.innerHTML = `<strong>${escapeHtml(message)}</strong><div class="hf-progress-track"><div class="hf-progress-bar" style="width:${pct.toFixed(1)}%"></div></div><div class="hf-progress-meta">${escapeHtml(detail)}</div>`;
+    if (job.status === "complete") {
+      $("#hf-status").textContent = "Download complete. The local model scan is running.";
+      $("#btn-hf-download").disabled = false;
+      await refreshModels();
+      return;
+    }
+    if (job.status === "failed") {
+      $("#hf-status").textContent = job.error;
+      $("#btn-hf-download").disabled = false;
+      return;
+    }
+    state.hfJobTimer = setTimeout(() => watchHuggingFaceDownload(jobId), 1000);
+  } catch (err) {
+    $("#hf-status").textContent = err.message;
+    $("#btn-hf-download").disabled = false;
+  }
+}
+
 function renderModels() {
   const list = $("#model-list");
   const q = ($("#model-search").value || "").toLowerCase();
@@ -454,6 +728,7 @@ function renderVramEstimate(est, extraMsgs) {
 function selectModel(path) {
   state.selectedModel = state.models.find((m) => m.path === path) || null;
   const el = $("#selected-model");
+  const launchHint = $("#launch-hint");
   if (state.selectedModel) {
     let tag = "";
     if (state.selectedModel.format === "hf") {
@@ -464,6 +739,7 @@ function selectModel(path) {
     el.textContent = tag + state.selectedModel.name;
     el.classList.remove("muted");
     $("#btn-start").disabled = false;
+    if (launchHint) launchHint.classList.add("hidden");
     const mtpCheck = $("#mtp-check");
     if (mtpCheck) {
       mtpCheck.checked = modelLooksMtp(state.selectedModel);
@@ -479,33 +755,125 @@ function selectModel(path) {
       syncVisionControls();
     }
   } else {
-    el.textContent = "Pick a model from the list";
+    el.textContent = "Choose a model from the list";
     el.classList.add("muted");
     $("#btn-start").disabled = true;
+    if (launchHint) launchHint.classList.remove("hidden");
     syncVisionControls();
   }
   renderModels();
   updateGpuWarning();
 }
 
-function renderGpus() {
-  const sel = $("#gpu-select");
-  if (!state.gpus.length) {
-    sel.innerHTML = '<option value="0">No GPU detected</option>';
-    return;
+const SPILL_OPTIONS = [
+  {
+    value: "none",
+    label: "Keep on GPU",
+    hint: "Fastest option — run entirely on the selected graphics card.",
+  },
+  {
+    value: "ram",
+    label: "Use system RAM if needed",
+    hint: "Lets the model spill into memory when VRAM is full. Slower, but fits larger models.",
+  },
+  {
+    value: "gpu",
+    label: "Spread across other GPUs",
+    hint: "Split the model across your other graphics cards when one card is not enough.",
+    multiGpu: true,
+  },
+  {
+    value: "both",
+    label: "Other GPUs, then RAM",
+    hint: "Use every graphics card first, then system RAM for anything left over.",
+    multiGpu: true,
+  },
+];
+
+function normalizeSpillValue(value) {
+  const spill = value || "none";
+  if (state.gpus.length < 2) {
+    if (spill === "both") return "ram";
+    if (spill === "gpu") return "none";
   }
-  sel.innerHTML = state.gpus
+  return spill;
+}
+
+function formatGpuSummary(g) {
+  const free =
+    g.memory_free_mib != null
+      ? ` · ${Math.round(g.memory_free_mib / 1024)} GB free`
+      : "";
+  return `${g.name} (${Math.round(g.memory_total_mib / 1024)} GB${free})`;
+}
+
+function updateSpillHint() {
+  const sel = $("#spill-select");
+  const hint = $("#spill-hint");
+  if (!sel || !hint) return;
+  const multi = state.gpus.length >= 2;
+  const selected = SPILL_OPTIONS.filter((option) => !option.multiGpu || multi).find(
+    (option) => option.value === sel.value
+  );
+  hint.textContent = selected?.hint || "";
+}
+
+function renderSpillOptions(preferred) {
+  const sel = $("#spill-select");
+  if (!sel) return;
+  const multi = state.gpus.length >= 2;
+  const options = SPILL_OPTIONS.filter((option) => !option.multiGpu || multi);
+  const current = normalizeSpillValue(preferred ?? sel.value);
+  sel.innerHTML = options
     .map(
-      (g) => {
-        const free = g.memory_free_mib != null
-          ? ` · ${Math.round(g.memory_free_mib / 1024)} GB free`
-          : "";
-        return `<option value="${g.index}">GPU ${g.index}: ${escapeHtml(g.name)} (${Math.round(
-          g.memory_total_mib / 1024
-        )} GB${free})</option>`;
-      }
+      (option) =>
+        `<option value="${option.value}">${escapeHtml(option.label)}</option>`
     )
     .join("");
+  sel.value = options.some((option) => option.value === current)
+    ? current
+    : "none";
+  updateSpillHint();
+}
+
+function renderGpus() {
+  const sel = $("#gpu-select");
+  const field = $("#gpu-field");
+  const singleWrap = $("#gpu-single-wrap");
+  const single = $("#gpu-single");
+  const deviceRow = $("#launch-device-row");
+  if (!sel) return;
+
+  if (!state.gpus.length) {
+    field?.classList.remove("hidden");
+    singleWrap?.classList.add("hidden");
+    deviceRow?.classList.remove("launch-device-row--single");
+    sel.innerHTML = '<option value="0">No GPU detected</option>';
+    renderSpillOptions();
+    return;
+  }
+
+  sel.innerHTML = state.gpus
+    .map(
+      (g) =>
+        `<option value="${g.index}">GPU ${g.index}: ${escapeHtml(formatGpuSummary(g))}</option>`
+    )
+    .join("");
+
+  if (state.gpus.length === 1) {
+    const g = state.gpus[0];
+    field?.classList.add("hidden");
+    singleWrap?.classList.remove("hidden");
+    deviceRow?.classList.add("launch-device-row--single");
+    if (single) single.textContent = formatGpuSummary(g);
+    sel.value = String(g.index);
+  } else {
+    field?.classList.remove("hidden");
+    singleWrap?.classList.add("hidden");
+    deviceRow?.classList.remove("launch-device-row--single");
+  }
+
+  renderSpillOptions();
 }
 
 function updateGpuWarning() {
@@ -806,8 +1174,10 @@ async function loadServers() {
 }
 
 async function loadFavorites() {
+  const prevCount = state.favorites.length;
   const data = await api("/api/favorites");
   state.favorites = data.favorites || [];
+  applyModelsPanelDefault(prevCount);
   renderFavorites();
   renderServers();
 }
@@ -869,8 +1239,9 @@ function loadFavoriteIntoForm(favoriteId) {
   }
 
   selectModel(model.path);
+  renderGpus();
   $("#gpu-select").value = String(favorite.gpu);
-  $("#spill-select").value = favorite.spill || "none";
+  renderSpillOptions(normalizeSpillValue(favorite.spill));
   setCtxPreset(Number(favorite.ctx));
   $("#ngl-input").value = String(favorite.ngl);
   $("#mtp-check").checked = Boolean(favorite.mtp);
@@ -894,6 +1265,14 @@ async function loadSettings() {
   const fontSize = clampFontSize(state.settings.ui_font_size);
   const fontInput = $("#settings-font-size");
   if (fontInput) fontInput.value = String(fontSize);
+  const settingsSplash = $("#settings-show-splash");
+  if (settingsSplash) {
+    settingsSplash.checked = state.settings.show_splash_on_startup !== false;
+  }
+  const welcomeSplash = $("#welcome-show-startup");
+  if (welcomeSplash) {
+    welcomeSplash.checked = state.settings.show_splash_on_startup !== false;
+  }
   updateFontSizeLabel(fontSize);
   applyFontSize(fontSize);
   const bits = [
@@ -1111,26 +1490,28 @@ function openAnalyzer(serverId) {
   const runnable = state.servers.filter((s) =>
     ["running", "starting"].includes(s.status)
   );
-  if (!runnable.length) {
-    alert("Start a model first");
-    return;
-  }
+  if (state.activeTab !== "analyzer") state.previousTab = state.activeTab;
+  state.activeTab = "analyzer";
   state.analyzerServerId =
-    serverId && runnable.some((s) => s.id === serverId)
+    runnable.length && serverId && runnable.some((s) => s.id === serverId)
       ? serverId
-      : runnable[0].id;
+      : runnable[0]?.id || null;
   const sel = $("#az-server-select");
-  sel.innerHTML = runnable
-    .map(
-      (s) =>
-        `<option value="${s.id}">${escapeHtml(s.alias || s.model_name)} · :${s.port}</option>`
-    )
-    .join("");
-  sel.value = state.analyzerServerId;
+  sel.innerHTML = runnable.length
+    ? runnable
+        .map(
+          (s) =>
+            `<option value="${s.id}">${escapeHtml(s.alias || s.model_name)} · :${s.port}</option>`
+        )
+        .join("")
+    : '<option value="">No running models</option>';
+  sel.disabled = !runnable.length;
+  sel.value = state.analyzerServerId || "";
   sel.dataset.ids = runnable.map((s) => s.id).join(",");
   $("#analyzer-overlay").classList.remove("hidden");
   $("#analyzer-overlay").setAttribute("aria-hidden", "false");
   document.body.classList.add("analyzer-open");
+  setTabSelection("analyzer");
   _bindAzWindowSliders();
   state.azForceChart = true;
   refreshAnalyzer();
@@ -1139,14 +1520,7 @@ function openAnalyzer(serverId) {
 }
 
 function closeAnalyzer() {
-  closeAnalyzerIo();
-  $("#analyzer-overlay").classList.add("hidden");
-  $("#analyzer-overlay").setAttribute("aria-hidden", "true");
-  document.body.classList.remove("analyzer-open");
-  if (state.analyzerTimer) {
-    clearInterval(state.analyzerTimer);
-    state.analyzerTimer = null;
-  }
+  showMainTab(state.previousTab);
 }
 
 async function refreshAnalyzer() {
@@ -1800,6 +2174,76 @@ function openSettings() {
   loadSettings().then(() => $("#settings-dialog").showModal());
 }
 
+function showWelcomeIfEnabled() {
+  if (state.settings.show_splash_on_startup !== false) {
+    renderWelcomeSlide(0);
+    $("#welcome-dialog").showModal();
+    startWelcomeAutoplay();
+  }
+}
+
+function stopWelcomeAutoplay() {
+  if (state.welcomeTimer) clearInterval(state.welcomeTimer);
+  state.welcomeTimer = null;
+}
+
+function startWelcomeAutoplay() {
+  stopWelcomeAutoplay();
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  state.welcomeTimer = setInterval(() => {
+    renderWelcomeSlide(state.welcomeSlide + 1);
+  }, 5000);
+}
+
+function restartWelcomeAutoplay() {
+  if ($("#welcome-dialog").open) startWelcomeAutoplay();
+}
+
+function renderWelcomeSlide(index) {
+  const slides = [...document.querySelectorAll(".welcome-slide")];
+  const dots = [...document.querySelectorAll(".welcome-dot")];
+  if (!slides.length) return;
+  const previous = state.welcomeSlide;
+  const next = (index + slides.length) % slides.length;
+  const direction = index < previous ? "previous" : "next";
+  state.welcomeSlide = next;
+  slides.forEach((slide, slideIndex) => {
+    const active = slideIndex === state.welcomeSlide;
+    slide.hidden = !active;
+    slide.classList.toggle("active", active);
+    slide.classList.remove("slide-from-left", "slide-from-right");
+    if (active && next !== previous) {
+      void slide.offsetWidth;
+      slide.classList.add(
+        direction === "previous" ? "slide-from-left" : "slide-from-right"
+      );
+    }
+  });
+  dots.forEach((dot, dotIndex) => {
+    const active = dotIndex === state.welcomeSlide;
+    dot.classList.toggle("active", active);
+    dot.setAttribute("aria-selected", String(active));
+  });
+}
+
+async function closeWelcome(tab = null) {
+  const showOnStartup = $("#welcome-show-startup").checked;
+  if (showOnStartup !== (state.settings.show_splash_on_startup !== false)) {
+    await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ show_splash_on_startup: showOnStartup }),
+    });
+    state.settings.show_splash_on_startup = showOnStartup;
+    $("#settings-show-splash").checked = showOnStartup;
+  }
+  stopWelcomeAutoplay();
+  $("#welcome-dialog").close();
+  const currentSlide = document.querySelector(".welcome-slide.active");
+  tab = tab || currentSlide?.dataset.welcomeTab || "load";
+  if (tab === "analyzer") openAnalyzer();
+  else showMainTab(tab);
+}
+
 async function saveSettings(e) {
   e.preventDefault();
   try {
@@ -1812,6 +2256,7 @@ async function saveSettings(e) {
         min_model_size_mb: parseInt($("#settings-min-size").value, 10),
         default_ctx: parseInt($("#settings-default-ctx").value, 10),
         ui_font_size: fontSize,
+        show_splash_on_startup: $("#settings-show-splash").checked,
       }),
     });
     applyFontSize(fontSize);
@@ -1825,9 +2270,66 @@ async function saveSettings(e) {
 
 function init() {
   initTooltips();
-  setModelsExpanded(false);
+  showMainTab("load");
   $("#btn-refresh").addEventListener("click", refreshModels);
   $("#btn-settings").addEventListener("click", openSettings);
+  $("#btn-welcome-continue").addEventListener("click", () => closeWelcome());
+  $("#btn-welcome-prev").addEventListener("click", () => {
+    renderWelcomeSlide(state.welcomeSlide - 1);
+    restartWelcomeAutoplay();
+  });
+  $("#btn-welcome-next").addEventListener("click", () => {
+    renderWelcomeSlide(state.welcomeSlide + 1);
+    restartWelcomeAutoplay();
+  });
+  document.querySelectorAll("[data-welcome-slide]").forEach((button) => {
+    button.addEventListener("click", () => {
+      renderWelcomeSlide(Number(button.dataset.welcomeSlide));
+      restartWelcomeAutoplay();
+    });
+  });
+  const welcomeDialog = $("#welcome-dialog");
+  welcomeDialog.addEventListener("close", stopWelcomeAutoplay);
+  welcomeDialog.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") {
+      renderWelcomeSlide(state.welcomeSlide - 1);
+      restartWelcomeAutoplay();
+    }
+    if (event.key === "ArrowRight") {
+      renderWelcomeSlide(state.welcomeSlide + 1);
+      restartWelcomeAutoplay();
+    }
+  });
+  $("#hf-search-form").addEventListener("submit", searchHuggingFace);
+  $("#btn-hf-clear").addEventListener("click", () => {
+    $("#hf-search-input").value = "";
+    $("#hf-results").innerHTML = "";
+    $("#hf-detail").innerHTML = '<p class="muted">Select a model to see its GGUF files.</p>';
+    $("#hf-result-count").textContent = "0 results";
+    $("#hf-status").textContent = " · Search Hugging Face to find a model.";
+    $("#btn-hf-more").classList.add("hidden");
+    state.hfModels = [];
+    state.hfRepo = null;
+    $("#hf-search-input").focus();
+  });
+  document.querySelectorAll(".hf-suggestion").forEach((button) => {
+    button.addEventListener("click", () => {
+      $("#hf-search-input").value = button.dataset.query;
+      searchHuggingFace();
+    });
+  });
+  $("#hf-sort").addEventListener("change", () => {
+    if ($("#hf-search-input").value.trim()) searchHuggingFace();
+  });
+  $("#btn-hf-direction").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const descending = button.dataset.direction === "-1";
+    button.dataset.direction = descending ? "1" : "-1";
+    button.textContent = descending ? "↑" : "↓";
+    button.setAttribute("aria-label", descending ? "Sort ascending" : "Sort descending");
+    if ($("#hf-search-input").value.trim()) searchHuggingFace();
+  });
+  $("#btn-hf-more").addEventListener("click", () => searchHuggingFace(null, true));
   $("#btn-toggle-models").addEventListener("click", () =>
     setModelsExpanded(!state.modelsExpanded)
   );
@@ -1843,7 +2345,12 @@ function init() {
   $("#launch-form").addEventListener("submit", startServer);
   $("#gpu-select").addEventListener("change", updateGpuWarning);
   const spillSel = $("#spill-select");
-  if (spillSel) spillSel.addEventListener("change", updateGpuWarning);
+  if (spillSel) {
+    spillSel.addEventListener("change", () => {
+      updateSpillHint();
+      updateGpuWarning();
+    });
+  }
   const mtpCheck = $("#mtp-check");
   if (mtpCheck) {
     mtpCheck.addEventListener("change", syncMtpControls);
@@ -1895,8 +2402,12 @@ function init() {
       }
     }
   });
-  const azBtn = $("#btn-analyzer");
-  if (azBtn) azBtn.addEventListener("click", () => openAnalyzer());
+  document.querySelectorAll(".app-tab").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.tab === "analyzer") openAnalyzer();
+      else showMainTab(button.dataset.tab);
+    });
+  });
   const azBack = $("#btn-az-back");
   if (azBack) azBack.addEventListener("click", closeAnalyzer);
   const azRef = $("#btn-az-refresh");
@@ -1943,8 +2454,9 @@ function init() {
   const lanBtn = $("#btn-lan-access");
   if (lanBtn) lanBtn.addEventListener("click", toggleLanAccess);
 
+  const settingsReady = loadSettings().then(showWelcomeIfEnabled);
   Promise.all([
-    loadSettings(),
+    settingsReady,
     loadGpus(),
     loadModels(),
     loadFavorites(),

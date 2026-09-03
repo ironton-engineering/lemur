@@ -26,7 +26,7 @@ Application releases and backend directories are immutable after a successful in
 
 ```text
 ~/.local/bin/lemur
-~/.local/share/applications/lemur.desktop
+~/.local/share/applications/io.github.ironton_engineering.Lemur.desktop
 ~/.local/share/icons/hicolor/scalable/apps/lemur.png
 ```
 

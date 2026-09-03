@@ -96,6 +96,7 @@ See [the install layout](docs/INSTALL_LAYOUT.md) for the full file ownership rul
 ## Features
 
 - Local GGUF and native NVFP4 model discovery
+- Hugging Face GGUF model search and download
 - Sharded GGUF grouping
 - NVIDIA GPU and VRAM display
 - Single-GPU and multi-GPU llama.cpp placement

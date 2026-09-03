@@ -57,6 +57,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Python with torch for convert_hf_to_gguf.py. Empty uses the current Python.
     "hf_convert_python": "",
     "ui_font_size": 15,
+    "show_splash_on_startup": True,
     "scan_exclude_dirs": [
         ".cache",
         ".git",
